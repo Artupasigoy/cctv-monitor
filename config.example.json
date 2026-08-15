@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "cameras": [],
+  "settings": {
+    "defaultLayout": 2,
+    "defaultCameraAssignment": {},
+    "autoStart": false,
+    "startMinimized": false,
+    "theme": "dark",
+    "go2rtc": {
+      "host": "127.0.0.1",
+      "apiPort": 1984
+    },
+    "scan": {
+      "port": 1986,
+      "range": ""
+    }
+  }
+}

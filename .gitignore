@@ -1,0 +1,28 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# Credentials / personal config
+config.json
+cameras.json
+go2rtc/*.log
+*.pem
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+
+# Build artifacts (webbase: launcher Go + package output)
+launcher/cctv-monitor
+dist-package/
+resources/go2rtc
+resources/chromium/
+tsconfig.tsbuildinfo
