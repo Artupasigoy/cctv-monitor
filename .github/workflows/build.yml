@@ -1,0 +1,120 @@
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  NAME: cctv-monitor
+
+jobs:
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+
+  build:
+    needs: build-frontend
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            goarch: amd64
+            goos: linux
+            suffix: ""
+          - arch: arm64
+            goarch: arm64
+            goos: linux
+            suffix: ""
+          - arch: arm
+            goarch: arm
+            goos: linux
+            goarm: "7"
+            suffix: ""
+          - arch: 386
+            goarch: 386
+            goos: linux
+            suffix: ""
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Download go2rtc for ${{ matrix.arch }}
+        run: |
+          mkdir -p resources
+          case "${{ matrix.arch }}" in
+            amd64) A=linux_amd64 ;;
+            arm64) A=linux_arm64 ;;
+            arm) A=linux_arm ;;
+            386) A=linux_i386 ;;
+          esac
+          curl -sL -o resources/go2rtc \
+            https://github.com/AlexxIT/go2rtc/releases/download/v1.9.14/go2rtc_${A}
+          chmod +x resources/go2rtc
+      - name: Build launcher
+        run: |
+          cd launcher
+          env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM=${{ matrix.goarm }} CGO_ENABLED=0 \
+            go build -trimpath -ldflags="-s -w" -o cctv-monitor .
+      - name: Fetch bundled Chromium (amd64 & arm64 only)
+        if: matrix.arch == 'amd64' || matrix.arch == 'arm64'
+        run: |
+          PLAT=$([ "${{ matrix.arch }}" = "amd64" ] && echo linux64 || echo linux-arm64)
+          curl -sL -o /tmp/chrome.zip "https://storage.googleapis.com/chrome-for-testing-public/153.0.8008.0/${PLAT}/chrome-${PLAT}.zip"
+          mkdir -p resources/chromium
+          unzip -q -o /tmp/chrome.zip -d /tmp/x
+          mv /tmp/x/chrome-${PLAT} resources/chromium/chrome
+          chmod +x resources/chromium/chrome/chrome
+        continue-on-error: true
+      - name: Package
+        run: |
+          mkdir -p out/cctv-monitor/dist out/cctv-monitor/resources
+          cp launcher/cctv-monitor out/cctv-monitor/
+          cp -r dist/. out/cctv-monitor/dist/
+          cp resources/go2rtc out/cctv-monitor/resources/
+          if [ -d resources/chromium ]; then cp -r resources/chromium out/cctv-monitor/resources/; fi
+          cp scripts/install.sh out/cctv-monitor/scripts/install.sh
+          chmod +x out/cctv-monitor/cctv-monitor out/cctv-monitor/resources/go2rtc
+          tar -czf cctv-monitor-linux-${{ matrix.arch }}.tar.gz -C out cctv-monitor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.arch }}
+          path: cctv-monitor-linux-${{ matrix.arch }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - run: |
+          mkdir -p release
+          for f in artifacts/package-*/*.tar.gz; do mv "$f" "release/$(basename "$f" .tar.gz | sed 's/package-//')"; done
+          mv artifacts/package-*/* release/ 2>/dev/null || true
+          ls release/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.tar.gz
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
