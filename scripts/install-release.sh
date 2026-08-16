@@ -6,25 +6,28 @@
 #
 #   tag default: latest
 #
-# Alur pintar:
-#   1. Deteksi arsitektur device secara otomatis (x86_64|arm64|arm|386)
-#      dan pilih paket yang paling compatible.
-#   2. Cek apakah sudah pernah install (ada /opt/cctv-monitor/version).
-#      - Fresh install  -> langsung install.
-#      - Versi sama     -> info "sudah terbaru", konfirmasi sebelum lanjut.
-#      - Versi beda     -> sarankan update, menunggu persetujuan user.
-#   3. Install: /opt/cctv-monitor + symlink + systemd autostart + desktop entry.
-#   4. Tampilkan info akses: cara buka GUI, tutup/buka browser, help, uninstall,
-#      dan keterangan auto-start saat reboot.
+# Alur (SEMUA pengecekan & persetujuan di AWAL, sebelum sistem disentuh):
+#   1. Deteksi arsitektur device secara otomatis (x86_64|arm64|arm|386).
+#      Tidak didukung -> berhenti segera, sistem tidak berubah.
+#   2. Tentukan versi yang akan diinstall (tag), lalu tampilkan ringkasan:
+#      arch, tag, dan status (fresh / update / versi sama) beserta persetujuan
+#      user — SEBELUM download apa pun.
+#   3. Pastikan browser Chromium tersedia (atau user setuju diinstall).
+#   4. Unduh + ekstrak paket ke temp (bukan ke sistem).
+#   5. Pre-flight: jalankan binary dari temp untuk memastikan paket compatible
+#      dengan mesin ini + cek ruang disk — SEBELUM menyalin apa pun.
+#   6. Install dengan rollback: /opt/cctv-monitor + symlink + systemd autostart
+#      + desktop entry. Gagal di tengah -> versi lama dipulihkan (tidak ada sampah).
+#   7. Tampilkan info akses.
 #
-# Catatan:Chromium bundle tidak termasuk (opsional).
+# Catatan: Chromium bundle tidak termasuk (opsional).
 set -euo pipefail
 
 OWNER="${1:?usage: install-release.sh OWNER REPO [tag]}"
 REPO="${2:?usage: install-release.sh OWNER REPO [tag]}"
 TAG="${3:-latest}"
 
-# Override untuk testing/self-host: 
+# Override untuk testing/self-host:
 #   RAW_BASE  -> base untuk mengambil lib-install.sh (default raw.githubusercontent.com)
 #   REL_BASE  -> base untuk mengunduh asset release (default github.com)
 RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com}"
@@ -41,9 +44,9 @@ INSTALL_DIR="/opt/cctv-monitor"
 BIN="/usr/local/bin/cctv-monitor"
 RUNUSER="$(detect_runuser)"
 
-# Browser wajib ada (Chromium-family) sebelum instalasi dilanjutkan.
-ensure_browser "${RUNUSER}"
+# --- FASE 1: pengecekan cepat (murah, fail segera). ---
 
+# 1a. Arsitektur — instan, tidak didukung -> berhenti tanpa perubahan.
 ARCH="$(detect_arch)"
 if [ "${ARCH}" = "unknown" ]; then
   echo "Arsitektur tidak didukung: $(uname -m)"
@@ -51,13 +54,13 @@ if [ "${ARCH}" = "unknown" ]; then
 fi
 ASSET="cctv-monitor-linux-${ARCH}.tar.gz"
 
-# 1. Cek instalasi yang sudah ada (fresh vs update).
+# 1b. Cek instalasi yang sudah ada (fresh vs update).
 INSTALLED_VERSION=""
 if [ -f "${INSTALL_DIR}/version" ]; then
   INSTALLED_VERSION="$(read_version "${INSTALL_DIR}")"
 fi
 
-# 2. Selesaikan tag release.
+# 1c. Selesaikan tag release.
 if [ "$TAG" = "latest" ]; then
   LATEST_TAG="$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" \
     | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')"
@@ -79,9 +82,24 @@ else
 fi
 echo ""
 
-# 3. Unduh ke temp dulu untuk mengetahui versi paket tanpa mengubah sistem.
+# 1d. Persetujuan user SEBELUM download — tidak ada sistem yang berubah di sini.
+if [ -n "${INSTALLED_VERSION}" ]; then
+  if [ "${INSTALLED_VERSION}" = "${TAG#v}" ]; then
+    echo "Versi terinstall (v${INSTALLED_VERSION}) SUDAH SAMA dengan release (v${TAG#v})."
+    ask_yes_no "Tidak perlu update. Tetap install ulang? [y/N] " || { echo "Dibatalkan."; exit 0; }
+  else
+    echo "Update tersedia: v${INSTALLED_VERSION} -> v${TAG#v}"
+    ask_yes_no "Lanjutkan update? [y/N] " || { echo "Update dibatalkan. Versi lama tetap terpasang."; exit 0; }
+  fi
+else
+  echo "Fresh install terdeteksi (v${TAG#v}). Melanjutkan..."
+fi
+
+# --- FASE 2: unduh ke temp (sistem belum tersentuh). ---
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
+
 URL="${REL_BASE}/${OWNER}/${REPO}/releases/download/${TAG}/${ASSET}"
 echo "[install] unduh ${URL}"
 curl -fsSL -m 600 -o "${TMP}/package.tar.gz" "$URL"
@@ -95,27 +113,31 @@ if [ ! -x "${PKG}/cctv-monitor" ]; then
 fi
 NEW_VERSION="$(read_version "${PKG}")"
 
-# 4. Keputusan fresh/update dengan persetujuan user.
+# --- FASE 3: pre-flight compatibility & ruang disk, sebelum sistem berubah. ---
+echo ""
+echo "[preflight] memverifikasi paket sebelum instalasi..."
+if ! preflight_package "${PKG}"; then
+  echo "[preflight] Paket tidak compatible dengan mesin ini. Instalasi DIHENTIKAN. Tidak ada file yang diubah." >&2
+  exit 1
+fi
+check_disk_space "${INSTALL_DIR}" "$(du -sb "${PKG}" 2>/dev/null | cut -f1)"
+
+# Browser wajib ada (Chromium-family). Menolak -> berhenti, sistem belum berubah.
+ensure_browser "${RUNUSER}" "${PKG}"
+
+# --- FASE 4: install dengan rollback. ---
+
+# Update-path aman: matikan service lama dulu agar binary tidak sedang dipakai.
 if [ -n "${INSTALLED_VERSION}" ]; then
-  if [ "${INSTALLED_VERSION}" = "${NEW_VERSION}" ]; then
-    echo "Versi terinstall (v${INSTALLED_VERSION}) SUDAH SAMA dengan release (v${NEW_VERSION})."
-    read -r -p "Tidak perlu update. Tetap install ulang? [y/N] " ans
-    case "$ans" in y|Y|yes|YES) ;; *) echo "Dibatalkan."; exit 0 ;; esac
-  else
-    echo "Update tersedia: v${INSTALLED_VERSION} -> v${NEW_VERSION}"
-    read -r -p "Lanjutkan update? [y/N] " ans
-    case "$ans" in y|Y|yes|YES) ;; *) echo "Update dibatalkan. Versi lama tetap terpasang."; exit 0 ;; esac
-  fi
-else
-  echo "Fresh install terdeteksi. Melanjutkan instalasi v${NEW_VERSION}..."
+  echo "[install] matikan auto-start lama sebelum update..."
+  disable_autostart "${RUNUSER}"
 fi
 
-# 5. Install.
-echo "[install] copy ke ${INSTALL_DIR}"
-mkdir -p "${INSTALL_DIR}"
-cp -rf "${PKG}/." "${INSTALL_DIR}/"
-chmod +x "${INSTALL_DIR}/cctv-monitor"
-chmod +x "${INSTALL_DIR}/resources/go2rtc" 2>/dev/null || true
+echo "[install] copy ke ${INSTALL_DIR} (dengan rollback)..."
+if ! install_with_rollback "${PKG}" "${INSTALL_DIR}"; then
+  echo "[install] GAGAL. Sistem dikembalikan ke kondisi sebelumnya. Tidak ada sampah tertinggal." >&2
+  exit 1
+fi
 
 echo "[install] symlink CLI: ${BIN}"
 ln -sf "${INSTALL_DIR}/cctv-monitor" "${BIN}"

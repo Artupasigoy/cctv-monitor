@@ -10,6 +10,10 @@
 # hanya jika folder resources/chromium ikut ter-package. Untuk desktop
 # low-spec, disarankan menginstall chromium/firefox dari repo distro saja.
 #
+# Alur (SEMUA pengecekan & persetujuan di AWAL, sebelum sistem disentuh):
+#   arch -> build ada -> pre-flight paket (binary jalan, ruang disk) -> browser
+#   -> copy dengan rollback (gagal -> versi lama dipulihkan, tanpa sampah).
+#
 # Usage: sudo ./scripts/install.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -37,14 +41,29 @@ RUNUSER="$(detect_runuser)"
 
 echo "[install] arch=${ARCH} versi=${VERSION} user=${RUNUSER}"
 
-# Browser wajib ada (Chromium-family) sebelum instalasi dilanjutkan.
-ensure_browser "${RUNUSER}"
+# --- Pre-flight SEBELUM sistem berubah: paket valid + ruang disk + browser. ---
+echo ""
+echo "[preflight] memverifikasi paket sebelum instalasi..."
+if ! preflight_package "${SRC}"; then
+  echo "[preflight] Paket tidak compatible dengan mesin ini. Instalasi DIHENTIKAN. Tidak ada file yang diubah." >&2
+  exit 1
+fi
+check_disk_space "${INSTALL_DIR}" "$(du -sb "${SRC}" 2>/dev/null | cut -f1)"
 
-echo "[install] copy ke ${INSTALL_DIR} ..."
-mkdir -p "${INSTALL_DIR}"
-cp -r "${SRC}/." "${INSTALL_DIR}/"
-chmod +x "${INSTALL_DIR}/cctv-monitor"
-chmod +x "${INSTALL_DIR}/resources/go2rtc" 2>/dev/null || true
+# Browser wajib ada (Chromium-family). Menolak -> berhenti, sistem belum berubah.
+ensure_browser "${RUNUSER}" "${SRC}"
+
+# --- Update-path aman: matikan service lama sebelum copy binary. ---
+if [ -d "${INSTALL_DIR}" ]; then
+  echo "[install] matikan auto-start lama sebelum update..."
+  disable_autostart "${RUNUSER}"
+fi
+
+echo "[install] copy ke ${INSTALL_DIR} (dengan rollback)..."
+if ! install_with_rollback "${SRC}" "${INSTALL_DIR}"; then
+  echo "[install] GAGAL. Sistem dikembalikan ke kondisi sebelumnya. Tidak ada sampah tertinggal." >&2
+  exit 1
+fi
 
 echo "[install] symlink CLI: ${BIN}"
 ln -sf "${INSTALL_DIR}/cctv-monitor" "${BIN}"

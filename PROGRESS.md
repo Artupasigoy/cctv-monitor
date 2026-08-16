@@ -175,3 +175,17 @@
 - Config tersimpan di localStorage browser (profil browser terpisah di data dir launcher).
 - go2rtc host/port default: `127.0.0.1:1984` (dikendalikan launcher; tidak editable di UI).
 - Scan: launcher `/scan` port 1986 (default `settings.scan.port`); range kosong = auto-detect subnet.
+
+### 2026-08-16 — Sesi 10 (Installer: semua cek & approval di awal, pre-flight, rollback)
+- Permasalahan: alur installer lama punya persetujuan DI TENGAH (setelah download), cek arch setelah browser, tidak ada verifikasi paket sebelum copy, dan tanpa rollback → risiko menunggu lama lalu gagal / meninggalkan sampah di `/opt` bila install terhenti.
+- Perubahan `scripts/lib-install.sh`:
+  - `ask_yes_no <prompt>`: baca jawaban dari `/dev/tty` — aman walau stdin adalah pipe (`curl | sudo bash`); tanpa ini, `read` mendapat EOF dan prompt "Setuju install?" selalu dianggap "n"/DITOLAK tanpa benar-benar menanyai user.
+  - `find_chromium <pkg_dir>`: bundled chromium juga terdeteksi dari folder paket (belum ter-copy), bukan hanya INSTALL_DIR.
+  - `ensure_browser <runuser> <pkg_dir>`: meneruskan pkg_dir untuk deteksi bundled; menjelaskan aplikasi butuh Chromium + tawarkan install 'chromium' via `ask_yes_no` (pilihan paling ringan & compatible dari repo distro).
+  - `preflight_package <pkg>`: jalankan `${pkg}/cctv-monitor version` (exit 0 = arkh cocok & binary jalan) + cek `dist/` dan `resources/go2rtc` ada → gagal = berhenti, sistem belum berubah.
+  - `check_disk_space <dst> <need>`: cek ruang disk cukup sebelum copy; otomatis naik ke ancestor terdekat yang sudah ada bila folder tujuan belum dibuat (fix: df gagal pada path baru).
+  - `install_with_rollback <src> <dst>`: backup INSTALL_DIR lama → copy baru → verifikasi launcher hasil copy → hapus backup; gagal di tengah → restore backup (update) atau hapus folder parsial (fresh). Tanpa sampah.
+- Perubahan `scripts/install-release.sh`: urutan baru = root → arch (fail cepat) → tag + ringkasan + **persetujuan sebelum download** → `ensure_browser` → download ke temp → ekstrak → `preflight_package` + `check_disk_space` → `install_with_rollback` → symlink → autostart → desktop entry. Update-path: `disable_autostart` dulu (matikan service lama), enable kembali setelah sukses.
+- Perubahan `scripts/install.sh`: pre-flight (`preflight_package` + `check_disk_space`) sebelum copy; `ensure_browser` menerima SRC (deteksi bundled); `install_with_rollback`; matikan auto-start lama sebelum update.
+- Docs: `docs/agents/desktop.md` (alur installer + pre-flight + rollback), `PROGRESS.md`.
+- Catatan: repo `Artupasigoy/cctv-monitor` private — `raw.githubusercontent.com`/`api.github.com` mengembalikan 404 tanpa token, jadi one-liner install gagal hingga repo dibuat public.

@@ -47,6 +47,8 @@ Launcher menjalankan go2rtc sebagai **child process**:
 - `--no-sandbox` ditambahkan otomatis saat berjalan sebagai root.
 - Profil browser terpisah di `~/.config/cctv-monitor/browser-profile` (tidak menyentuh profil user).
 - **Auto-install saat install**: jika tidak ada browser Chromium, installer (`ensure_browser` di `lib-install.sh`) menawarkan install `chromium` via package manager distro; **menolak = instalasi dihentikan**.
+- **Pre-flight sebelum sistem berubah**: installer menjalankan binary launcher dari paket temp (`preflight_package`) + cek ruang disk (`check_disk_space`) **sebelum menyalin apa pun** ke `/opt`. Paket yang tidak compatible (arkh salah / binary corrupt / disk penuh) → instalasi berhenti dengan pesan jelas, **tidak ada file yang tertinggal**.
+- **Rollback**: install memakai `install_with_rollback` — versi lama di-backup, copy baru, verifikasi; gagal di tengah → versi lama dipulihkan otomatis (tidak ada sampah).
 
 ### Linux CLI (headless) — browser tetap muncul GUI
 - Jika environment punya display server (Xorg/Wayland terhubung TV/monitor, atau X11 forwarding), `cctv-monitor` otomatis membuka Chromium.
@@ -100,6 +102,14 @@ curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/install-rel
   | sudo bash -s -- OWNER REPO [tag]
 ```
 
+Alur installer (semua pengecekan & persetujuan di AWAL, sistem belum tersentuh):
+1. **Deteksi arkh** (`detect_arch`) — tidak didukung → berhenti segera.
+2. **Ringkasan + persetujuan** (fresh / update / versi sama) **sebelum download** — tidak ada download besar bila user menolak.
+3. **Browser Chromium** dicek/diinstall — menolak → berhenti, belum ada perubahan.
+4. **Download + ekstrak ke temp** (bukan ke sistem).
+5. **Pre-flight**: jalankan binary dari temp + cek ruang disk → paket tidak compatible → berhenti, `/opt` tidak tersentuh.
+6. **Install dengan rollback** (backup versi lama, restore bila gagal) → symlink → autostart → desktop entry.
+
 ## Development Environment
 
 - Node.js hanya untuk development/build frontend (`npm install`, `npm run dev`).
@@ -122,9 +132,9 @@ cctv-monitor/
 ├── scripts/
 │   ├── build.sh             # build frontend + launcher per-arch (go2rtc otomatis per-arch)
 │   ├── package.sh           # tarball release per arch (dist-package/release/)
-│   ├── install.sh           # install ke /opt + symlink + autostart + info akses
-│   ├── install-release.sh   # one-liner smart installer (deteksi arch, fresh/update + approval)
-│   ├── lib-install.sh       # fungsi bersama (autostart, desktop, print_access_info)
+│   ├── install.sh           # install ke /opt + symlink + autostart + info akses (pre-flight + rollback)
+│   ├── install-release.sh   # one-liner smart installer (cek & approval di awal, pre-flight, rollback)
+│   ├── lib-install.sh       # fungsi bersama (autostart, desktop, preflight_package, rollback, print_access_info)
 │   ├── uninstall.sh         # uninstall bersih (--purge-data untuk hapus data dir)
 │   ├── fetch-go2rtc.sh
 │   └── fetch-chromium.sh
