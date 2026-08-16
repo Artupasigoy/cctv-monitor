@@ -110,49 +110,70 @@ detect_pkgmgr() {
 #   - coba 'chromium' (Debian, Ubuntu lama)
 #   - lalu 'chromium-browser' (transitional wrapper ke snap di Ubuntu 22.04+)
 #   - lalu 'snap install chromium' (jika snapd ada dan apt semua gagal)
-# Verifikasi keberhasilan memakai find_chromium (bukan return code apt/snap),
-# karena chromium-browser bisa "berhasil" via apt tapi binary-nya ada di
-# /snap/bin (dipindah saat package diinstall).
-# Mengembalikan 0 jika salah satu berhasil, 1 jika semua gagal.
+# Strategi: LANGSUNG coba install (bukan di-gate oleh apt-cache policy, yang
+# bisa salah di bawah `set -o pipefail`), lalu VERIFIKASI binary dengan
+# find_chromium — karena chromium-browser bisa "berhasil" via apt tapi
+# binary-nya di /snap/bin, dan sebaliknya apt bisa "gagal" padahal binary
+# sudah ada. Mengembalikan 0 jika salah satu berhasil, 1 jika semua gagal.
 apt_install_chromium() {
   local pkg_dir="${1:-}"
+  local pkg candidate apt_log
+
+  apt_log="$(mktemp /tmp/cctvmon-apt.XXXXXX)"
 
   echo "[browser] apt-get update (mungkin butuh beberapa saat)..."
   apt-get update 2>&1 | tail -3 || true
 
-  if apt-cache policy chromium 2>/dev/null | grep -q 'Candidate: [0-9]'; then
-    echo "[browser] install package 'chromium' via apt..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y chromium 2>&1 | tail -5
-    if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
-      return 0
+  # Jalur 1: package apt (chromium lalu chromium-browser). Informasi candidate
+  # hanya ditampilkan, tidak menjadi gerbang keputusan.
+  for pkg in chromium chromium-browser; do
+    candidate="$(apt-cache policy "${pkg}" 2>/dev/null | sed -n 's/^ *Candidate: //p' | head -1 || true)"
+    echo "[browser] coba package '${pkg}' via apt (candidate: ${candidate:-tidak-diketahui})..."
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkg}" > "${apt_log}" 2>&1; then
+      if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+        echo "[browser] OK: Chromium terpasang via package '${pkg}'."
+        rm -f "${apt_log}"
+        return 0
+      fi
+    else
+      tail -6 "${apt_log}" || true
     fi
-  fi
-
-  if apt-cache policy chromium-browser 2>/dev/null | grep -q 'Candidate: [0-9]'; then
-    echo "[browser] install package 'chromium-browser' via apt..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y chromium-browser 2>&1 | tail -5
-    if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
-      return 0
+    echo "[browser] '${pkg}' belum menghasilkan Chromium yang jalan; coba perbaiki dpkg (apt-get install -f)..."
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y -f > "${apt_log}" 2>&1; then
+      if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+        echo "[browser] OK: Chromium terpasang setelah perbaikan dpkg."
+        rm -f "${apt_log}"
+        return 0
+      fi
+    else
+      tail -4 "${apt_log}" || true
     fi
-  fi
+  done
+  rm -f "${apt_log}"
 
+  # Jalur 2: snap — hanya relevan jika snapd tersedia (umumnya Ubuntu modern).
   if command -v snap >/dev/null 2>&1; then
-    echo "[browser] apt tidak menyediakan Chromium yang jalan; mencoba 'snap install chromium'..."
-    # Pastikan snapd aktif (bisa mati di container/headless) sebelum snap install.
+    echo "[browser] apt tidak berhasil; mencoba 'snap install chromium'..."
     systemctl start snapd 2>/dev/null || true
-    snap install chromium 2>&1 | tail -5
+    snap install chromium 2>&1 | tail -5 || true
     if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+      echo "[browser] OK: Chromium terpasang via snap."
       return 0
     fi
   fi
 
   echo "[browser] GAGAL menginstall Chromium secara otomatis." >&2
-  echo "[browser] Diagnosa: apt candidate chromium=$(apt-cache policy chromium 2>/dev/null | grep Candidate || echo none);" >&2
-  echo "[browser]   chromium-browser=$(apt-cache policy chromium-browser 2>/dev/null | grep Candidate || echo none); snap=$(command -v snap || echo none)" >&2
-  echo "[browser]   /snap/bin/chromium=$( [ -x /snap/bin/chromium ] && echo ada || echo tidak-ada )" >&2
-  echo "[browser] Solusi manual:" >&2
-  echo "[browser]   sudo apt install chromium-browser   (Ubuntu/Debian)" >&2
-  echo "[browser]   sudo snap install chromium          (Ubuntu 22.04+)" >&2
+  echo "[browser] Diagnosa:" >&2
+  echo "[browser]   apt candidate chromium        = $(apt-cache policy chromium 2>/dev/null | sed -n 's/^ *Candidate: //p' | head -1 || echo none)" >&2
+  echo "[browser]   apt candidate chromium-browser= $(apt-cache policy chromium-browser 2>/dev/null | sed -n 's/^ *Candidate: //p' | head -1 || echo none)" >&2
+  echo "[browser]   snap                          = $(command -v snap 2>/dev/null || echo none)" >&2
+  echo "[browser]   /usr/bin/chromium             = $([ -x /usr/bin/chromium ] && echo ada || echo tidak-ada)" >&2
+  echo "[browser]   /usr/bin/chromium-browser     = $([ -x /usr/bin/chromium-browser ] && echo ada || echo tidak-ada)" >&2
+  echo "[browser]   /snap/bin/chromium            = $([ -x /snap/bin/chromium ] && echo ada || echo tidak-ada)" >&2
+  echo "[browser] Solusi manual (pakai salah satu yang tersedia):" >&2
+  echo "[browser]   sudo apt install chromium          (Debian/Ubuntu)" >&2
+  echo "[browser]   sudo snap install chromium         (Ubuntu 22.04+)" >&2
+  echo "[browser] Setelah berhasil, jalankan instalasi cctv-monitor lagi." >&2
   return 1
 }
 
