@@ -110,6 +110,8 @@ Alur installer (semua pengecekan & persetujuan di AWAL, sistem belum tersentuh):
 5. **Pre-flight**: jalankan binary dari temp + cek ruang disk → paket tidak compatible → berhenti, `/opt` tidak tersentuh.
 6. **Install dengan rollback** (backup versi lama, restore bila gagal) → symlink → autostart → desktop entry.
 
+Catatan kegagalan unduh: `fetch_url`/`fetch_file` memakai **retry (3x) + cache-buster** (query string unik) untuk mengatasi DNS sementara atau **cache 404 CDN `raw.githubusercontent.com`** yang masih melekat sesaat setelah repo dibuat public (dari status private). Bila masih gagal, pesan keluar jelas "GAGAL mengunduh lib-install.sh/paket" — bukan `command not found`. Jika 404 berlanjut beberapa saat setelah repo public, tunggu beberapa menit (cache CDN) lalu jalankan ulang.
+
 ## Development Environment
 
 - Node.js hanya untuk development/build frontend (`npm install`, `npm run dev`).

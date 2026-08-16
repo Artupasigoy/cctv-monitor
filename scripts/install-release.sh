@@ -33,7 +33,47 @@ TAG="${3:-latest}"
 RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com}"
 REL_BASE="${REL_BASE:-https://github.com}"
 
-source <(curl -fsSL "${RAW_BASE}/${OWNER}/${REPO}/main/scripts/lib-install.sh")
+# fetch_url: unduh URL dengan retry + cache-buster (query string unik per percobaan).
+# Mengatasi: DNS gagal sementara, atau cache 404 CDN raw saat repo baru dibuat
+# public. $1 = base URL. Mengembalikan isi file via stdout; exit 1 bila semua
+# percobaan gagal.
+fetch_url() {
+  local url="$1" i
+  for i in 1 2 3; do
+    if curl -fsSL -m 60 "${url}?cb=$RANDOM$i"; then
+      return 0
+    fi
+    echo "[install] unduh gagal (percobaan $i/3): ${url}" >&2
+    sleep 2
+  done
+  return 1
+}
+
+# fetch_file: unduh URL ke file output dengan retry + cache-buster.
+# $1 = URL, $2 = file output.
+fetch_file() {
+  local url="$1" out="$2" i
+  for i in 1 2 3; do
+    if curl -fsSL -m 600 -o "${out}" "${url}?cb=$RANDOM$i"; then
+      return 0
+    fi
+    echo "[install] unduh gagal (percobaan $i/3): ${url}" >&2
+    sleep 2
+  done
+  return 1
+}
+
+# Muat fungsi bersama (lib-install.sh). Gagal -> pesan jelas, bukan lanjut ke
+# pemanggilan fungsi yang tidak terdefinisi (mis. 'detect_runuser: command not found').
+if ! source <(fetch_url "${RAW_BASE}/${OWNER}/${REPO}/main/scripts/lib-install.sh"); then
+  echo "[install] GAGAL mengunduh lib-install.sh dari GitHub (cek koneksi internet/DNS)." >&2
+  echo "[install]   URL: ${RAW_BASE}/${OWNER}/${REPO}/main/scripts/lib-install.sh" >&2
+  exit 1
+fi
+if ! command -v detect_runuser >/dev/null 2>&1; then
+  echo "[install] GAGAL: file dependensi installer tidak dimuat dengan benar." >&2
+  exit 1
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Jalankan dengan sudo: ... | sudo bash -s -- ${OWNER} ${REPO} ${TAG}"
@@ -102,7 +142,10 @@ trap 'rm -rf "${TMP}"' EXIT
 
 URL="${REL_BASE}/${OWNER}/${REPO}/releases/download/${TAG}/${ASSET}"
 echo "[install] unduh ${URL}"
-curl -fsSL -m 600 -o "${TMP}/package.tar.gz" "$URL"
+if ! fetch_file "${URL}" "${TMP}/package.tar.gz"; then
+  echo "[install] GAGAL mengunduh paket release (cek koneksi internet/DNS atau pastikan tag ${TAG} punya aset ${ASSET})." >&2
+  exit 1
+fi
 
 mkdir -p "${TMP}/pkg"
 tar -xzf "${TMP}/package.tar.gz" -C "${TMP}/pkg"
