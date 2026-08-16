@@ -101,17 +101,26 @@ if [ -f "${INSTALL_DIR}/version" ]; then
 fi
 
 # 1c. Selesaikan tag release. Guarded + retry agar kegagalan API tidak jadi error samar.
+#     Penting: unduh respons API ke FILE dulu, lalu parse — BUKAN lewat pipe.
+#     Pipe `curl | grep -m1` + `set -o pipefail` memicu SIGPIPE (curl exit 23)
+#     saat grep menutup pipe lebih dulu, padahal data sudah terambil -> hasil valid
+#     dibuang dan dianggap gagal. Unduh ke file menghindari masalah ini sepenuhnya.
 if [ "$TAG" = "latest" ]; then
   LATEST_TAG=""
+  api_file="$(mktemp /tmp/cctvmon-api.XXXXXX)"
   for i in 1 2 3; do
-    if LATEST_TAG="$(curl -fsSL -m 60 "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest?cb=$RANDOM$i" \
-        | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')" && [ -n "$LATEST_TAG" ]; then
-      break
+    if curl -fsSL -m 60 -o "${api_file}" \
+        "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest?cb=$RANDOM$i"; then
+      LATEST_TAG="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${api_file}" | head -1)"
+      if [ -n "${LATEST_TAG}" ]; then
+        break
+      fi
     fi
     echo "[install] tidak dapat menentukan release terbaru (percobaan $i/3); gunakan: install-release.sh OWNER REPO <tag>" >&2
     LATEST_TAG=""
     sleep 2
   done
+  rm -f "${api_file}"
   if [ -z "$LATEST_TAG" ]; then
     echo "[install] GAGAL menentukan release terbaru (cek koneksi internet/DNS atau repo/README)." >&2
     exit 1

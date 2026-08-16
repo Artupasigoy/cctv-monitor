@@ -82,6 +82,18 @@ find_chromium() {
       return 0
     fi
   done
+  # Chromium via flatpak — binary di export dir, tidak selalu di PATH.
+  for fp in \
+    /var/lib/flatpak/exports/bin/org.chromium.Chromium \
+    /var/lib/flatpak/exports/bin/com.google.Chrome \
+    /var/lib/flatpak/exports/bin/com.microsoft.Edge \
+    "${HOME}/.local/share/flatpak/exports/bin/org.chromium.Chromium" \
+    "${HOME}/.local/share/flatpak/exports/bin/com.google.Chrome"; do
+    if [ -x "${fp}" ]; then
+      echo "${fp}"
+      return 0
+    fi
+  done
   # bundled Chromium ikut dianggap tersedia — cek dari paket (belum ter-copy) dulu,
   # lalu dari lokasi instalasi yang sudah ada.
   if [ -n "${pkg_dir}" ] && [ -x "${pkg_dir}/resources/chromium/chrome" ]; then
@@ -105,83 +117,234 @@ detect_pkgmgr() {
   else echo "unknown"; fi
 }
 
-# apt_install_chromium: install Chromium di Debian/Ubuntu dengan fallback berlapis.
-# Di Ubuntu modern, package 'chromium' TIDAK tersedia (dipindah ke snap):
-#   - coba 'chromium' (Debian, Ubuntu lama)
-#   - lalu 'chromium-browser' (transitional wrapper ke snap di Ubuntu 22.04+)
-#   - lalu 'snap install chromium' (jika snapd ada dan apt semua gagal)
-# Strategi: LANGSUNG coba install (bukan di-gate oleh apt-cache policy, yang
-# bisa salah di bawah `set -o pipefail`), lalu VERIFIKASI binary dengan
-# find_chromium — karena chromium-browser bisa "berhasil" via apt tapi
-# binary-nya di /snap/bin, dan sebaliknya apt bisa "gagal" padahal binary
-# sudah ada. Mengembalikan 0 jika salah satu berhasil, 1 jika semua gagal.
-apt_install_chromium() {
-  local pkg_dir="${1:-}"
-  local pkg candidate apt_log
+# detect_distro: nama distro dari /etc/os-release (untuk diagnosa & pesan).
+detect_distro() {
+  local id
+  id="$(sed -n 's/^ID=//p' /etc/os-release 2>/dev/null | tr -d '"')"
+  [ -n "${id}" ] || id="$(uname -s)"
+  echo "${id}"
+}
 
+# ---------------------------------------------------------------------------
+# Browser Chromium — instalasi multi-strategi yang TIDAK mudah menyerah.
+#
+# Prinsip: coba SEMUA cara yang relevan secara berurutan, berhenti hanya saat
+# salah satu berhasil (verifikasi = find_chromium menemukan binary). Tidak ada
+# strategi yang mem-block strategi lain; kegagalan satu jalur LANGSUNG lanjut
+# ke jalur berikutnya. Urutan (semua Chromium-family, sesuai kebijakan proyek):
+#   1. package manager native distro (paling ringan & compatible)
+#   2. snap  (Ubuntu 22.04+)
+#   3. flatpak (universal, bila tersedia)
+#   4. unduh Google Chrome .deb/.rpm langsung (amd64/x86_64)
+#   5. diagnosa lengkap + solusi manual per distro
+# ---------------------------------------------------------------------------
+
+# apt_install_pkg: coba satu package via apt dan verifikasi binary.
+# $1 = package, $2 = pkg_dir (opsional). Return 0 = binary jalan.
+apt_install_pkg() {
+  local pkg="$1" pkg_dir="${2:-}" apt_log
   apt_log="$(mktemp /tmp/cctvmon-apt.XXXXXX)"
-
-  echo "[browser] apt-get update (mungkin butuh beberapa saat)..."
-  apt-get update 2>&1 | tail -3 || true
-
-  # Jalur 1: package apt (chromium lalu chromium-browser). Informasi candidate
-  # hanya ditampilkan, tidak menjadi gerbang keputusan.
-  for pkg in chromium chromium-browser; do
-    candidate="$(apt-cache policy "${pkg}" 2>/dev/null | sed -n 's/^ *Candidate: //p' | head -1 || true)"
-    echo "[browser] coba package '${pkg}' via apt (candidate: ${candidate:-tidak-diketahui})..."
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkg}" > "${apt_log}" 2>&1; then
-      if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
-        echo "[browser] OK: Chromium terpasang via package '${pkg}'."
-        rm -f "${apt_log}"
-        return 0
-      fi
-    else
-      tail -6 "${apt_log}" || true
+  echo "[browser] coba package '${pkg}' via apt..."
+  if DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkg}" > "${apt_log}" 2>&1; then
+    if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+      echo "[browser] OK: Chromium terpasang via package '${pkg}'."
+      rm -f "${apt_log}"
+      return 0
     fi
-    echo "[browser] '${pkg}' belum menghasilkan Chromium yang jalan; coba perbaiki dpkg (apt-get install -f)..."
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y -f > "${apt_log}" 2>&1; then
-      if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
-        echo "[browser] OK: Chromium terpasang setelah perbaikan dpkg."
-        rm -f "${apt_log}"
-        return 0
-      fi
-    else
-      tail -4 "${apt_log}" || true
-    fi
-  done
+  else
+    tail -6 "${apt_log}" || true
+  fi
   rm -f "${apt_log}"
+  return 1
+}
 
-  # Jalur 2: snap — hanya relevan jika snapd tersedia (umumnya Ubuntu modern).
-  if command -v snap >/dev/null 2>&1; then
-    echo "[browser] apt tidak berhasil; mencoba 'snap install chromium'..."
-    systemctl start snapd 2>/dev/null || true
-    snap install chromium 2>&1 | tail -5 || true
+# install_chromium_native: jalur 1 — package manager native distro.
+install_chromium_native() {
+  local pkg_dir="${1:-}" pkgmgr pkg
+  pkgmgr="$(detect_pkgmgr)"
+  case "${pkgmgr}" in
+    apt)
+      echo "[browser] apt-get update (mungkin butuh beberapa saat)..."
+      apt-get update 2>&1 | tail -3 || true
+      # Debian: 'chromium' ada. Ubuntu <22.04: 'chromium'. Ubuntu 22.04+:
+      # 'chromium' tidak ada, 'chromium-browser' adalah wrapper ke snap.
+      for pkg in chromium chromium-browser; do
+        if apt_install_pkg "${pkg}" "${pkg_dir}"; then return 0; fi
+      done
+      # dpkg bisa "berhasil" sebagian tapi binary belum jalan — perbaiki dulu.
+      echo "[browser] coba perbaiki dpkg (apt-get install -f)..."
+      if DEBIAN_FRONTEND=noninteractive apt-get install -y -f >/dev/null 2>&1; then
+        if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+          echo "[browser] OK: Chromium terpasang setelah perbaikan dpkg."
+          return 0
+        fi
+      fi
+      ;;
+    dnf)
+      # Fedora punya chromium; RHEL/CentOS bisa pakai google-chrome-stable.
+      for pkg in chromium google-chrome-stable; do
+        echo "[browser] coba package '${pkg}' via dnf..."
+        if dnf install -y "${pkg}" >/dev/null 2>&1; then
+          if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+            echo "[browser] OK: Chromium terpasang via package '${pkg}'."
+            return 0
+          fi
+        fi
+      done
+      ;;
+    pacman)
+      echo "[browser] coba package 'chromium' via pacman..."
+      if pacman -S --noconfirm chromium >/dev/null 2>&1; then
+        if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+          echo "[browser] OK: Chromium terpasang via package 'chromium'."
+          return 0
+        fi
+      fi
+      ;;
+    zypper)
+      echo "[browser] coba package 'chromium' via zypper..."
+      if zypper --non-interactive install chromium >/dev/null 2>&1; then
+        if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+          echo "[browser] OK: Chromium terpasang via package 'chromium'."
+          return 0
+        fi
+      fi
+      ;;
+    apk)
+      echo "[browser] coba package 'chromium' via apk..."
+      if apk add --no-cache chromium >/dev/null 2>&1; then
+        if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+          echo "[browser] OK: Chromium terpasang via package 'chromium'."
+          return 0
+        fi
+      fi
+      ;;
+    *)
+      echo "[browser] package manager tidak dikenal (${pkgmgr})." >&2
+      ;;
+  esac
+  return 1
+}
+
+# install_chromium_snap: jalur 2 — snap (Ubuntu 22.04+).
+install_chromium_snap() {
+  local pkg_dir="${1:-}" snap_log
+  if ! command -v snap >/dev/null 2>&1; then
+    echo "[browser] snap tidak tersedia di mesin ini (skip jalur snap)."
+    return 1
+  fi
+  echo "[browser] coba 'snap install chromium'..."
+  # Pastikan snapd aktif (bisa mati di container/headless) sebelum snap install.
+  systemctl start snapd 2>/dev/null || true
+  snap_log="$(mktemp /tmp/cctvmon-snap.XXXXXX)"
+  if snap install chromium > "${snap_log}" 2>&1; then
+    rm -f "${snap_log}"
     if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
       echo "[browser] OK: Chromium terpasang via snap."
       return 0
     fi
+  else
+    tail -5 "${snap_log}" || true
   fi
-
-  echo "[browser] GAGAL menginstall Chromium secara otomatis." >&2
-  echo "[browser] Diagnosa:" >&2
-  echo "[browser]   apt candidate chromium        = $(apt-cache policy chromium 2>/dev/null | sed -n 's/^ *Candidate: //p' | head -1 || echo none)" >&2
-  echo "[browser]   apt candidate chromium-browser= $(apt-cache policy chromium-browser 2>/dev/null | sed -n 's/^ *Candidate: //p' | head -1 || echo none)" >&2
-  echo "[browser]   snap                          = $(command -v snap 2>/dev/null || echo none)" >&2
-  echo "[browser]   /usr/bin/chromium             = $([ -x /usr/bin/chromium ] && echo ada || echo tidak-ada)" >&2
-  echo "[browser]   /usr/bin/chromium-browser     = $([ -x /usr/bin/chromium-browser ] && echo ada || echo tidak-ada)" >&2
-  echo "[browser]   /snap/bin/chromium            = $([ -x /snap/bin/chromium ] && echo ada || echo tidak-ada)" >&2
-  echo "[browser] Solusi manual (pakai salah satu yang tersedia):" >&2
-  echo "[browser]   sudo apt install chromium          (Debian/Ubuntu)" >&2
-  echo "[browser]   sudo snap install chromium         (Ubuntu 22.04+)" >&2
-  echo "[browser] Setelah berhasil, jalankan instalasi cctv-monitor lagi." >&2
+  rm -f "${snap_log}"
+  echo "[browser] snap install chromium tidak menghasilkan Chromium yang jalan." >&2
   return 1
 }
 
+# install_chromium_flatpak: jalur 3 — flatpak (universal).
+install_chromium_flatpak() {
+  local pkg_dir="${1:-}" fp_log
+  if ! command -v flatpak >/dev/null 2>&1; then
+    echo "[browser] flatpak tidak tersedia di mesin ini (skip jalur flatpak)."
+    return 1
+  fi
+  echo "[browser] coba 'flatpak install org.chromium.Chromium'..."
+  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || true
+  fp_log="$(mktemp /tmp/cctvmon-flatpak.XXXXXX)"
+  if flatpak install -y --noninteractive flathub org.chromium.Chromium > "${fp_log}" 2>&1; then
+    rm -f "${fp_log}"
+    if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+      echo "[browser] OK: Chromium terpasang via flatpak."
+      return 0
+    fi
+  else
+    tail -5 "${fp_log}" || true
+  fi
+  rm -f "${fp_log}"
+  echo "[browser] flatpak install Chromium tidak menghasilkan Chromium yang jalan." >&2
+  return 1
+}
+
+# install_chromium_direct: jalur 4 — unduh Google Chrome .deb/.rpm langsung
+# dari dl.google.com (jalur terakhir sebelum menyerah). Hanya amd64/x86_64.
+install_chromium_direct() {
+  local pkg_dir="${1:-}" pkgmgr arch deb url
+  pkgmgr="$(detect_pkgmgr)"
+  arch="$(uname -m)"
+  case "${arch}" in
+    x86_64|amd64) ;;
+    *)
+      echo "[browser] unduh langsung hanya untuk amd64/x86_64 (skip jalur langsung)."
+      return 1
+      ;;
+  esac
+  case "${pkgmgr}" in
+    apt|dnf|zypper) ;;
+    *)
+      echo "[browser] unduh langsung tidak relevan untuk pkgmgr ${pkgmgr} (skip)."
+      return 1
+      ;;
+  esac
+  echo "[browser] coba unduh Google Chrome langsung dari dl.google.com..."
+  deb="$(mktemp /tmp/cctvmon-chrome.XXXXXX)"
+  case "${pkgmgr}" in
+    apt) url="https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" ;;
+    dnf|zypper) url="https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm" ;;
+  esac
+  if ! curl -fsSL -m 120 -o "${deb}" "${url}"; then
+    rm -f "${deb}"
+    echo "[browser] GAGAL mengunduh Google Chrome (mungkin tanpa internet/ke dl.google.com)." >&2
+    return 1
+  fi
+  case "${pkgmgr}" in
+    apt)
+      DEBIAN_FRONTEND=noninteractive dpkg -i "${deb}" >/dev/null 2>&1 || true
+      # dpkg -i sering butuh dependensi yang belum ada -> perbaiki dengan apt.
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -f >/dev/null 2>&1 || true
+      ;;
+    dnf)
+      dnf install -y "${deb}" >/dev/null 2>&1 || true
+      ;;
+    zypper)
+      zypper --non-interactive install "${deb}" >/dev/null 2>&1 || true
+      ;;
+  esac
+  rm -f "${deb}"
+  if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
+    echo "[browser] OK: Chromium terpasang via Google Chrome (unduh langsung)."
+    return 0
+  fi
+  echo "[browser] Google Chrome gagal terpasang/terdeteksi." >&2
+  return 1
+}
+
+# browser_manual_help: panduan manual per distro saat semua jalur otomatis gagal.
+browser_manual_help() {
+  echo "[browser] Install Chromium manual lalu jalankan instalasi lagi:" >&2
+  echo "[browser]   Debian/Ubuntu/Raspi OS : sudo apt install chromium-browser   (atau) sudo snap install chromium" >&2
+  echo "[browser]                          : sudo apt install chromium           (Debian)" >&2
+  echo "[browser]   Fedora                 : sudo dnf install chromium" >&2
+  echo "[browser]   Arch/Manjaro           : sudo pacman -S chromium" >&2
+  echo "[browser]   Alpine                 : sudo apk add chromium" >&2
+  echo "[browser]   OpenSUSE               : sudo zypper install chromium" >&2
+  echo "[browser]   Universal (flatpak)    : sudo flatpak install flathub org.chromium.Chromium" >&2
+  echo "[browser]   Universal (Google)     : unduh dari https://www.google.com/chrome/ (deb/rpm)" >&2
+}
+
 # ensure_browser: pastikan ada browser Chromium. Jika tidak ada, jelaskan bahwa
-# aplikasi membutuhkan Chromium, lalu TAWARKAN auto-install package "chromium"
-# sesuai package manager distro (pilihan paling ringan & paling compatible:
-# chromium dari repo distro — lebih ringan daripada google-chrome/edge/bundled).
-# Jika user setuju -> install; jika menolak -> instalasi DIHENTIKAN (exit 1).
+# aplikasi membutuhkan Chromium, lalu TAWARKAN auto-install. Auto-install
+# memakai strategi berlapis: native -> snap -> flatpak -> unduh langsung.
+# Jika semua gagal -> pesan jelas per distro (bukan berhenti diam-diam).
 # $1 = runuser (untuk pesan yang akurat). $2 (opsional) = folder paket untuk
 #     deteksi bundled chromium sebelum ter-copy.
 ensure_browser() {
@@ -197,66 +360,23 @@ ensure_browser() {
   echo "[browser] Belum ada Chromium-family (chromium, google-chrome, microsoft-edge)"
   echo "[browser] yang terpasang di mesin ini."
   echo ""
-  local pkgmgr
-  pkgmgr="$(detect_pkgmgr)"
-  if [ "${pkgmgr}" = "unknown" ]; then
-    echo "[browser] Package manager distro tidak dikenal. Install Chromium secara manual:"
-    echo "[browser]   Debian/Ubuntu : sudo apt install chromium-browser   (Ubuntu 22.04+ install via snap)"
-    echo "[browser]                  sudo apt install chromium           (Debian)"
-    echo "[browser]   Fedora        : sudo dnf install chromium"
-    echo "[browser]   Arch/Manjaro  : sudo pacman -S chromium"
-    echo "[browser]   Alpine        : sudo apk add chromium"
-    echo "[browser]   OpenSUSE      : sudo zypper install chromium"
-    echo "[browser] Setelah terinstall, jalankan instalasi lagi."
-    exit 1
-  fi
-
-  echo "[browser] Installer akan menginstall 'chromium' via ${pkgmgr}."
-  echo "[browser] 'chromium' dari repo distro adalah pilihan PALING RINGAN dan"
-  echo "[browser] paling compatible (lebih ringan daripada google-chrome/edge/bundled)."
+  echo "[browser] Installer akan mencoba beberapa cara otomatis (native, snap,"
+  echo "[browser] flatpak, lalu unduh Google Chrome) sampai berhasil."
   echo "[browser] (untuk skip otomatis, jalankan dengan env CCTVMON_NO_BROWSER=1)"
   if [ "${CCTVMON_NO_BROWSER:-0}" != "1" ] && ask_yes_no "Setuju untuk menginstall Chromium sekarang? [Y/n] " y; then
-    echo "[browser] Menginstall chromium via ${pkgmgr}..."
-    case "${pkgmgr}" in
-      apt)
-        # Fallback berlapis (chromium -> chromium-browser -> snap); verifikasi
-        # keberhasilan memakai find_chromium, bukan return code apt/snap.
-        if ! apt_install_chromium "${pkg_dir}"; then
-          echo "[browser] GAGAL menginstall Chromium secara otomatis." >&2
-          exit 1
-        fi
-        ;;
-      dnf)
-        if ! dnf install -y chromium; then
-          echo "[browser] GAGAL menginstall Chromium via dnf." >&2
-          exit 1
-        fi
-        ;;
-      pacman)
-        if ! pacman -S --noconfirm chromium; then
-          echo "[browser] GAGAL menginstall Chromium via pacman." >&2
-          exit 1
-        fi
-        ;;
-      zypper)
-        if ! zypper --non-interactive install chromium; then
-          echo "[browser] GAGAL menginstall Chromium via zypper." >&2
-          exit 1
-        fi
-        ;;
-      apk)
-        if ! apk add --no-cache chromium; then
-          echo "[browser] GAGAL menginstall Chromium via apk." >&2
-          exit 1
-        fi
-        ;;
-    esac
+    echo "[browser] Mencoba memasang Chromium (native -> snap -> flatpak -> unduh langsung)..."
+    if ! install_chromium_native "${pkg_dir}" \
+      && ! install_chromium_snap "${pkg_dir}" \
+      && ! install_chromium_flatpak "${pkg_dir}" \
+      && ! install_chromium_direct "${pkg_dir}"; then
+      echo "[browser] GAGAL memasang Chromium lewat semua cara otomatis." >&2
+      echo "[browser] Diagnosa: distro=$(detect_distro), pkgmgr=$(detect_pkgmgr), arch=$(uname -m)" >&2
+      browser_manual_help
+      exit 1
+    fi
   else
     echo "[browser] DITOLAK. Instalasi tidak bisa dilanjutkan tanpa browser Chromium."
-    echo "[browser] Install Chromium dulu, misalnya:"
-    echo "[browser]   sudo apt install chromium-browser   (Debian/Ubuntu/Raspi OS)"
-    echo "[browser]   sudo dnf install chromium           (Fedora)"
-    echo "[browser]   sudo pacman -S chromium             (Arch/Manjaro)"
+    browser_manual_help
     exit 1
   fi
 
@@ -264,7 +384,7 @@ ensure_browser() {
     echo "[browser] OK: Chromium terinstall ($(find_chromium "${pkg_dir}"))"
     return 0
   fi
-  echo "[browser] Chromium masih tidak ditemukan setelah install. Cek package manager distro Anda."
+  echo "[browser] Chromium masih tidak ditemukan setelah install. Cek package manager distro Anda." >&2
   exit 1
 }
 

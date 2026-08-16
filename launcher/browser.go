@@ -78,6 +78,16 @@ func findFirstSystemBrowser() (string, error) {
 			return p, nil
 		}
 	}
+	// Chromium/Chrome via flatpak — binary di export dir, tidak selalu di PATH.
+	for _, p := range []string{
+		"/var/lib/flatpak/exports/bin/org.chromium.Chromium",
+		"/var/lib/flatpak/exports/bin/com.google.Chrome",
+		"/var/lib/flatpak/exports/bin/com.microsoft.Edge",
+	} {
+		if fileExists(p) {
+			return p, nil
+		}
+	}
 	return "", fmt.Errorf("browser sistem Chromium tidak ditemukan")
 }
 
@@ -92,6 +102,7 @@ func noBrowserHelp() string {
 		"  Arch/Manjaro                   : sudo pacman -S chromium\n" +
 		"  Alpine                         : sudo apk add chromium\n" +
 		"  OpenSUSE                       : sudo zypper install chromium\n" +
+		"  Universal (flatpak)            : sudo flatpak install flathub org.chromium.Chromium\n" +
 		"Setelah terinstall, jalankan lagi: cctv-monitor"
 }
 
