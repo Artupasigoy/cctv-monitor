@@ -1,10 +1,12 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Camera } from '@/types/camera'
 import { StatusIndicator } from './StatusIndicator'
 import { CameraSelector } from './CameraSelector'
 import { useStream } from '@/hooks/useStream'
 import { useCamera } from '@/hooks/useCamera'
 import { useFullscreen } from '@/hooks/useFullscreen'
+
+const IDLE_HIDE_MS = 4000
 
 interface Props {
   slotLabel: string
@@ -16,6 +18,8 @@ interface Props {
 
 export function CameraTile({ slotLabel, camera, cameras, soundEnabled, onSelectCamera }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const idleTimer = useRef<number | undefined>(undefined)
+  const [controlsHidden, setControlsHidden] = useState(false)
   const { camera: cameraInfo, status } = useCamera(camera?.id ?? null)
   const { isFullscreen, toggle, fullscreenRef } = useFullscreen()
 
@@ -24,6 +28,17 @@ export function CameraTile({ slotLabel, camera, cameras, soundEnabled, onSelectC
   const currentCamera = camera ?? cameraInfo
   const showPlaceholder = !camera || !camera.host || !camera.rtspPath
   const isActive = Boolean(camera && camera.host && camera.rtspPath)
+
+  const handleMouseMove = useCallback(() => {
+    setControlsHidden(false)
+    window.clearTimeout(idleTimer.current)
+    idleTimer.current = window.setTimeout(() => setControlsHidden(true), IDLE_HIDE_MS)
+  }, [])
+
+  useEffect(() => {
+    handleMouseMove()
+    return () => window.clearTimeout(idleTimer.current)
+  }, [handleMouseMove])
 
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -34,7 +49,12 @@ export function CameraTile({ slotLabel, camera, cameras, soundEnabled, onSelectC
   )
 
   return (
-    <div className={`tile${isFullscreen ? ' is-fullscreen' : ''}`} ref={fullscreenRef} onDoubleClick={handleDoubleClick}>
+    <div
+      className={`tile${isFullscreen ? ' is-fullscreen' : ''}${controlsHidden ? ' controls-hidden' : ''}`}
+      ref={fullscreenRef}
+      onDoubleClick={handleDoubleClick}
+      onMouseMove={handleMouseMove}
+    >
       <div className="tile-video-wrap">
         {!showPlaceholder ? (
           <video ref={videoRef} className="tile-video" autoPlay playsInline muted={!soundEnabled} />
@@ -62,10 +82,12 @@ export function CameraTile({ slotLabel, camera, cameras, soundEnabled, onSelectC
             ↻ Coba Lagi
           </button>
         )}
-        <button type="button" className="tile-btn" title="Fullscreen" onClick={toggle}>
-          ⛶
-        </button>
       </div>
+
+      <button type="button" className="tile-fs-btn" title="Fullscreen" onClick={toggle}>
+        <span className="tile-fs-icon" aria-hidden="true">⛶</span>
+        <span>Fullscreen</span>
+      </button>
 
       {status.message && isActive && (
         <div className="tile-status-msg" title={status.lastError ?? status.message}>
