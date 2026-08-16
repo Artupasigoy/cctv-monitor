@@ -100,12 +100,20 @@ if [ -f "${INSTALL_DIR}/version" ]; then
   INSTALLED_VERSION="$(read_version "${INSTALL_DIR}")"
 fi
 
-# 1c. Selesaikan tag release.
+# 1c. Selesaikan tag release. Guarded + retry agar kegagalan API tidak jadi error samar.
 if [ "$TAG" = "latest" ]; then
-  LATEST_TAG="$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" \
-    | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')"
+  LATEST_TAG=""
+  for i in 1 2 3; do
+    if LATEST_TAG="$(curl -fsSL -m 60 "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest?cb=$RANDOM$i" \
+        | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')" && [ -n "$LATEST_TAG" ]; then
+      break
+    fi
+    echo "[install] tidak dapat menentukan release terbaru (percobaan $i/3); gunakan: install-release.sh OWNER REPO <tag>" >&2
+    LATEST_TAG=""
+    sleep 2
+  done
   if [ -z "$LATEST_TAG" ]; then
-    echo "[install] tidak dapat menentukan release terbaru; gunakan: install-release.sh OWNER REPO <tag>" >&2
+    echo "[install] GAGAL menentukan release terbaru (cek koneksi internet/DNS atau repo/README)." >&2
     exit 1
   fi
   TAG="$LATEST_TAG"

@@ -69,6 +69,15 @@ func findFirstSystemBrowser() (string, error) {
 			return p, nil
 		}
 	}
+	// Chromium via snap (Ubuntu) ada di /snap/bin — mungkin tidak di PATH.
+	for _, p := range []string{
+		"/snap/bin/chromium",
+		"/var/lib/snapd/snap/bin/chromium",
+	} {
+		if fileExists(p) {
+			return p, nil
+		}
+	}
 	return "", fmt.Errorf("browser sistem Chromium tidak ditemukan")
 }
 
@@ -77,7 +86,8 @@ func findFirstSystemBrowser() (string, error) {
 func noBrowserHelp() string {
 	return "tidak ada browser Chromium ditemukan (sistem maupun bundled).\n" +
 		"Program hanya mendukung Chromium-family. Install salah satu, misalnya:\n" +
-		"  Debian/Ubuntu/Raspberry Pi OS : sudo apt install chromium\n" +
+		"  Debian/Ubuntu/Raspberry Pi OS : sudo apt install chromium-browser  (Ubuntu 22.04+ install via snap)\n" +
+		"                                  sudo apt install chromium          (Debian)\n" +
 		"  Fedora                         : sudo dnf install chromium\n" +
 		"  Arch/Manjaro                   : sudo pacman -S chromium\n" +
 		"  Alpine                         : sudo apk add chromium\n" +

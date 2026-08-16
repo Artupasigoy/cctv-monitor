@@ -7,8 +7,17 @@ BIN="${BIN:-/usr/local/bin/cctv-monitor}"
 
 # detect_runuser: user target (bukan root) untuk service/desktop/data dir.
 detect_runuser() {
-  RUNUSER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
-  echo "${RUNUSER}"
+  local ru="${SUDO_USER:-}"
+  if [ -z "${ru}" ]; then
+    # logname bisa exit 0 dengan output kosong — pastikan hasil tidak kosong.
+    ru="$(logname 2>/dev/null)"
+  fi
+  if [ -z "${ru}" ]; then
+    # Cari user non-root yang sedang login (fallback paling masuk akal).
+    ru="$(awk -F: '$3>=1000 && $3<65534 && $7!~"nologin|false" {print $1; exit}' /etc/passwd 2>/dev/null)"
+  fi
+  [ -n "${ru}" ] || ru="root"
+  echo "${ru}"
 }
 
 # detect_arch: nama arch package dari uname -m.
@@ -51,7 +60,7 @@ ask_yes_no() {
 # CHROMIUM_BROWSERS: daftar binary Chromium-family yang didukung.
 CHROMIUM_BROWSERS="chromium chromium-browser google-chrome google-chrome-stable microsoft-edge"
 
-# find_chromium: cari browser Chromium yang terpasang di PATH. Return path atau kosong.
+# find_chromium: cari browser Chromium yang terpasang. Return nama/path atau kosong.
 # $1 (opsional) = folder paket yang sedang diproses (untuk deteksi bundled chromium
 #                  sebelum paket di-copy, mis. saat fresh install).
 find_chromium() {
@@ -59,6 +68,13 @@ find_chromium() {
   for b in ${CHROMIUM_BROWSERS}; do
     if command -v "${b}" >/dev/null 2>&1; then
       echo "${b}"
+      return 0
+    fi
+  done
+  # Chromium via snap (Ubuntu) ada di /snap/bin — mungkin tidak di PATH.
+  for sp in /snap/bin/chromium /var/lib/snapd/snap/bin/chromium; do
+    if [ -x "${sp}" ]; then
+      echo "${sp}"
       return 0
     fi
   done
@@ -85,6 +101,41 @@ detect_pkgmgr() {
   else echo "unknown"; fi
 }
 
+# apt_install_chromium: install Chromium di Debian/Ubuntu dengan fallback berlapis.
+# Di Ubuntu modern, package 'chromium' TIDAK tersedia (dipindah ke snap):
+#   - coba 'chromium' (Debian, Ubuntu lama)
+#   - lalu 'chromium-browser' (transitional wrapper ke snap di Ubuntu 22.04+)
+#   - lalu 'snap install chromium' (jika snapd ada dan apt semua gagal)
+# Mengembalikan 0 jika salah satu berhasil, 1 jika semua gagal.
+apt_install_chromium() {
+  local apt_out
+  apt-get update -y >/dev/null 2>&1 || true
+
+  if apt-cache policy chromium 2>/dev/null | grep -q 'Candidate: [0-9]'; then
+    echo "[browser] install package 'chromium' via apt..."
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y chromium; then
+      return 0
+    fi
+  fi
+
+  if apt-cache policy chromium-browser 2>/dev/null | grep -q 'Candidate: [0-9]'; then
+    echo "[browser] install package 'chromium-browser' via apt..."
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y chromium-browser; then
+      return 0
+    fi
+  fi
+
+  if command -v snap >/dev/null 2>&1; then
+    echo "[browser] apt tidak menyediakan Chromium; mencoba 'snap install chromium'..."
+    if snap install chromium; then
+      return 0
+    fi
+  fi
+
+  echo "[browser] GAGAL menginstall Chromium (package chromium/chromium-browser/snap tidak berhasil)." >&2
+  return 1
+}
+
 # ensure_browser: pastikan ada browser Chromium. Jika tidak ada, jelaskan bahwa
 # aplikasi membutuhkan Chromium, lalu TAWARKAN auto-install package "chromium"
 # sesuai package manager distro (pilihan paling ringan & paling compatible:
@@ -109,7 +160,8 @@ ensure_browser() {
   pkgmgr="$(detect_pkgmgr)"
   if [ "${pkgmgr}" = "unknown" ]; then
     echo "[browser] Package manager distro tidak dikenal. Install Chromium secara manual:"
-    echo "[browser]   Debian/Ubuntu : sudo apt install chromium"
+    echo "[browser]   Debian/Ubuntu : sudo apt install chromium-browser   (Ubuntu 22.04+ install via snap)"
+    echo "[browser]                  sudo apt install chromium           (Debian)"
     echo "[browser]   Fedora        : sudo dnf install chromium"
     echo "[browser]   Arch/Manjaro  : sudo pacman -S chromium"
     echo "[browser]   Alpine        : sudo apk add chromium"
@@ -124,18 +176,45 @@ ensure_browser() {
   if ask_yes_no "Setuju untuk menginstall Chromium sekarang? [y/N] "; then
     echo "[browser] Menginstall chromium via ${pkgmgr}..."
     case "${pkgmgr}" in
-      apt)    apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y chromium ;;
-      dnf)    dnf install -y chromium ;;
-      pacman) pacman -S --noconfirm chromium ;;
-      zypper) zypper --non-interactive install chromium ;;
-      apk)    apk add --no-cache chromium ;;
+      apt)
+        # Fallback berlapis (chromium -> chromium-browser -> snap); guard error.
+        if ! apt_install_chromium; then
+          echo "[browser] GAGAL menginstall Chromium secara otomatis. Install manual:" >&2
+          echo "[browser]   sudo apt install chromium-browser   (atau) sudo snap install chromium" >&2
+          exit 1
+        fi
+        ;;
+      dnf)
+        if ! dnf install -y chromium; then
+          echo "[browser] GAGAL menginstall Chromium via dnf." >&2
+          exit 1
+        fi
+        ;;
+      pacman)
+        if ! pacman -S --noconfirm chromium; then
+          echo "[browser] GAGAL menginstall Chromium via pacman." >&2
+          exit 1
+        fi
+        ;;
+      zypper)
+        if ! zypper --non-interactive install chromium; then
+          echo "[browser] GAGAL menginstall Chromium via zypper." >&2
+          exit 1
+        fi
+        ;;
+      apk)
+        if ! apk add --no-cache chromium; then
+          echo "[browser] GAGAL menginstall Chromium via apk." >&2
+          exit 1
+        fi
+        ;;
     esac
   else
     echo "[browser] DITOLAK. Instalasi tidak bisa dilanjutkan tanpa browser Chromium."
     echo "[browser] Install Chromium dulu, misalnya:"
-    echo "[browser]   sudo apt install chromium   (Debian/Ubuntu/Raspi OS)"
-    echo "[browser]   sudo dnf install chromium   (Fedora)"
-    echo "[browser]   sudo pacman -S chromium     (Arch/Manjaro)"
+    echo "[browser]   sudo apt install chromium-browser   (Debian/Ubuntu/Raspi OS)"
+    echo "[browser]   sudo dnf install chromium           (Fedora)"
+    echo "[browser]   sudo pacman -S chromium             (Arch/Manjaro)"
     exit 1
   fi
 

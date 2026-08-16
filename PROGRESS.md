@@ -23,6 +23,7 @@
 | Auto-start saat reboot | SELESAI | systemd user service + enable-linger (aktif default saat install) |
 | Package release | SELESAI | `scripts/package.sh` → `dist-package/release/cctv-monitor-linux-<arch>.tar.gz` |
 | Browser standarisasi | SELESAI | Chromium-family only (firefox/epiphany/falkon ditolak), autoplay flag, auto-install chromium (menolak = instalasi berhenti) |
+| Installer hardening | SELESAI | Semua cek & persetujuan di awal; fallback install chromium utk Ubuntu modern (chromium-browser/snap); deteksi /snap/bin (installer + launcher); detect_runuser tahan logname kosong; download retry+cache-buster; preflight+rollback |
 | Verifikasi Playwright full | TODO | Verifikasi UI di dalam launcher (served dist) bila ada environment dengan display |
 
 ## Langkah Berikutnya (urutan)
