@@ -15,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -40,7 +39,7 @@ var (
 	flagHeadless  = flag.Bool("headless", false, "serve + go2rtc saja, tanpa membuka browser")
 	flagNoBrowser = flag.Bool("no-browser", false, "alias headless: jangan buka browser")
 	flagNoGo2rtc  = flag.Bool("no-go2rtc", false, "jangan spawn go2rtc (untuk dev frontend)")
-	flagBrowser   = flag.String("browser", "", "paksa browser: chromium|firefox|system|bundled|<nama-binary> (default: auto)")
+	flagBrowser   = flag.String("browser", "", "paksa browser: chromium|chromium-browser|google-chrome|microsoft-edge|system|bundled (default: auto)")
 	flagKiosk     = flag.Bool("kiosk", false, "mode kiosk/fullscreen (untuk STB/raspi display)")
 	flagDataDir   = flag.String("data-dir", "", "folder data aplikasi (default: ~/.config/cctv-monitor)")
 )
@@ -59,6 +58,36 @@ type options struct {
 }
 
 func main() {
+	// Subcommand: cctv-monitor <cmd>
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "help", "-h", "--help":
+			fmt.Print(helpText)
+			return
+		case "version", "-v", "--version":
+			printVersion()
+			return
+		case "status":
+			runStatus()
+			return
+		case "open-browser":
+			runOpenBrowser()
+			return
+		case "close-browser":
+			runCloseBrowser()
+			return
+		case "enable-autostart":
+			runAutostart(true)
+			return
+		case "disable-autostart":
+			runAutostart(false)
+			return
+		case "uninstall":
+			runUninstall()
+			return
+		}
+	}
+
 	flag.Parse()
 
 	exe, err := os.Executable()
@@ -176,17 +205,4 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
-}
-
-// execLookPath: cari binary di resources; jika tidak ada, cari di PATH.
-func execLookPath(dir, name string) (string, error) {
-	candidate := filepath.Join(dir, name)
-	if fileExists(candidate) {
-		return candidate, nil
-	}
-	p, err := exec.LookPath(name)
-	if err != nil {
-		return "", fmt.Errorf("binary %s tidak ditemukan (cari: %s)", name, candidate)
-	}
-	return p, nil
 }

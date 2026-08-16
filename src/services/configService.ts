@@ -44,7 +44,11 @@ export function getStoredConfig(): AppConfig | null {
 }
 
 export function loadConfig(): AppConfig {
-  return getStoredConfig() ?? getDefaultConfig()
+  const stored = getStoredConfig()
+  if (!stored) return getDefaultConfig()
+  const defaults = getDefaultConfig().settings
+  const settings: ApplicationSettings = { ...defaults, ...stored.settings }
+  return { ...stored, settings }
 }
 
 export async function saveConfig(config: AppConfig): Promise<void> {

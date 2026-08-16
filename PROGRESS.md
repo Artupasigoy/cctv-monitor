@@ -16,7 +16,13 @@
 | Scan kamera (LAN) | SELESAI | Launcher Go `/scan` (auto-detect subnet + connect-scan 554/8000) + filter RTSP-only di frontend |
 | Mode scan-only | SELESAI | Input manual IP/port/path dihapus; alur Scan → Masukkan Kredensial → Simpan & Terapkan |
 | Settings minimal | SELESAI | Hanya Default Layout + nama/enabled/kredensial kamera yang editable; go2rtc/scan jadi info otomatis |
-| Build multi-arch + install | SELESAI | `scripts/build.sh` (amd64/arm64/arm/386) + `install.sh` (desktop + CLI-only) |
+| Build multi-arch + install | SELESAI | `scripts/build.sh` (amd64/arm64/arm/386, go2rtc diunduh otomatis per-arch saat cross-build) + `install.sh` (desktop + CLI-only) |
+| Uninstall bersih | SELESAI | `scripts/uninstall.sh [--purge-data]` — hapus /opt + symlink + systemd + desktop entry (+ data dir) |
+| Smart installer | SELESAI | `install-release.sh` one-liner: deteksi arch, fresh/update + approval versi, autostart, info akses akhir |
+| Subcommand launcher | SELESAI | `help`, `version`, `status`, `open-browser`, `close-browser`, `enable/disable-autostart`, `uninstall` |
+| Auto-start saat reboot | SELESAI | systemd user service + enable-linger (aktif default saat install) |
+| Package release | SELESAI | `scripts/package.sh` → `dist-package/release/cctv-monitor-linux-<arch>.tar.gz` |
+| Browser standarisasi | SELESAI | Chromium-family only (firefox/epiphany/falkon ditolak), autoplay flag, auto-install chromium (menolak = instalasi berhenti) |
 | Verifikasi Playwright full | TODO | Verifikasi UI di dalam launcher (served dist) bila ada environment dengan display |
 
 ## Langkah Berikutnya (urutan)
@@ -54,6 +60,54 @@
 
 ## Sesi Kerja
 
+### 2026-08-16 — Sesi 9 (Audit hardening: anti-beban terus-menerus + error reporting jelas)
+- Audit penuh jalur streaming/reconnect/lifecycle/launcher. Temuan: (1) reconnect loop tanpa batas saat autoplay diblokir, (2) reconnect tak pernah berhenti saat kamera offline permanen, (3) `handleStall` reconnect tanpa backoff, (4) orphan go2rtc saat launcher SIGKILL terus menarik RTSP, (5) kode mati `iceTrickleSupported`.
+- Perbaikan:
+  - `streamService.ts`: `MAX_RECONNECT_ATTEMPTS=20` → setelah itu **offline** + slow retry **5 menit** (`SLOW_RETRY_DELAY_MS`) dengan pesan jelas; `retryNow()` (tombol Coba Lagi); `reconnectWithBackoff()` untuk stall; hapus `iceTrickleSupported`; pesan per skenario.
+  - `cameraService.ts`: `setCameraStatus` menyimpan `lastError` (dibersihkan saat online).
+  - `useStream.ts`: `handleStall` memakai backoff (bukan reconnect langsung); **proteksi autoplay** — video `paused` karena autoplay diblokir TIDAK dianggap stall; return `retry`.
+  - `CameraTile.tsx`: tombol "↻ Coba Lagi" (saat offline/error/reconnecting) + pesan status (`lastError`) di tile.
+  - `launcher/go2rtc.go`: **reclaim orphan** — jika port API 1984 terisi, deteksi go2rtc milik aplikasi via `/proc` cmdline (path config) & bunuh sebelum spawn baru.
+- Verifikasi: go build/vet OK, typecheck OK. Orphan test: go2rtc manual di port 1984 → launcher membunuh orphan & spawn baru (log terbukti). Dev server + playwright: tombol Coba Lagi & pesan "WebSocket error" tampil; retry memicu koneksi ulang.
+- Docs: `docs/agents/streaming.md` (batas reconnect + slow retry + autoplay guard), `docs/agents/desktop.md` (orphan reclaim).
+
+### 2026-08-16 — Sesi 8 (Suara live CCTV: toggle Bisu/Suara, default off)
+- Fitur suara: `settings.soundEnabled` (default `false`). Tombol di topbar — ikon speaker **tercoret** saat nonaktif (Bisu), speaker normal saat aktif (Suara). Global untuk semua tile.
+- `StreamConnection` menambah `addTransceiver('audio', recvonly)` agar track audio diterima via WebRTC; `<video muted={!soundEnabled}>`.
+- `loadConfig()` di-merge dengan default settings agar config lama (tanpa `soundEnabled`) tidak error.
+- Komponen `SpeakerIcon.tsx` (SVG lokal, no CDN — sesuai UI dependency policy).
+- Terverifikasi via dev server + playwright: default Bisu, toggle dua arah, persistensi localStorage, ikon coret hadir.
+- Docs: `docs/agents/frontend.md` (Audio Policy), PROGRESS.md.
+
+### 2026-08-16 — Sesi 7 (Browser standarisasi: Chromium-family only + auto-install gate)
+- Keputusan user: **hanya Chromium-family** yang didukung resmi (chromium, chromium-browser, google-chrome, google-chrome-stable, microsoft-edge). Firefox/Epiphany/Falkon ditolak.
+- `launcher/browser.go` (rewrite): daftar browser disaring chromium-only; cabang Firefox/Epiphany dihapus; flag `--autoplay-policy=no-user-gesture-required` untuk semua mode; `--no-sandbox` otomatis saat root; pesan error runtime berisi cara install per distro + catatan SELinux/Fedora; `--browser` non-chromium ditolak. Hapus `resolveCmd`/xvfb auto-wrap (xvfb jadi manual). Hapus `execLookPath` duplikat di main.go.
+- `scripts/lib-install.sh`: tambah `ensure_browser` — deteksi chromium ada (PATH + bundled); jika tidak ada → deteksi package manager (`apt`/`dnf`/`pacman`/`zypper`/`apk`) → tawarkan install `chromium`; **user menolak → instalasi exit 1** dengan pesan jelas per distro.
+- `install.sh` & `install-release.sh`: panggil `ensure_browser` di awal (wajib sebelum lanjut).
+- Verifikasi `ensure_browser`: (A) chromium ada → lanjut; (B) tidak ada + menolak → exit 1; (C) tidak ada + setuju → auto-install mock → lanjut.
+- Docs: README, architecture.md, desktop.md, testing.md di-update ke Chromium-only.
+
+### 2026-08-16 — Sesi 6 (Smart installer + subcommand launcher + auto-start)
+- Launcher Go: tambah subcommand `help/version/status/open-browser/close-browser/enable-autostart/disable-autostart/uninstall` (launcher/cmd.go) + versi di-ldflags.
+- `build.sh`: bake versi (`-X main.version`), tulis file `version` di dist-package.
+- `scripts/lib-install.sh`: fungsi bersama (detect_arch, detect_runuser, enable/disable_autostart, create_desktop_entry, print_access_info).
+- `install.sh`: pakai lib, **aktifkan autostart default** (systemd user service + enable-linger), tampilkan info akses akhir (buka GUI, tutup/buka browser, help, uninstall, keterangan reboot).
+- `install-release.sh` (rewrite): smart installer — deteksi arch, cek fresh/update (versi sama → info + konfirmasi; beda → saran update + persetujuan user), install, autostart, info akhir. Env `RAW_BASE`/`REL_BASE` untuk testing/self-host.
+- `scripts/package.sh`: buat tarball `cctv-monitor-linux-<arch>.tar.gz` (4 arch, berisi launcher+dist+go2rtc+scripts).
+- Verifikasi di host:
+  - `cctv-monitor version/help/status` OK; `status` deteksi server+go2rtc; `open-browser`/`close-browser` pesan benar tanpa display.
+  - Smart installer (mock server): fresh install v0.1.0 OK; versi sama → "sudah terbaru" + batal; versi beda v0.2.0 → tawaran update + setuju → sukses.
+  - `uninstall.sh --purge-data` bersih (hapus /opt, symlink, desktop, service, data dir).
+- Docs: README.md (alur smart install, command reference, best practice, autostart, to-do), PROGRESS.md.
+
+### 2026-08-16 — Sesi 5 (Verifikasi install/uninstall multi-device)
+- Analisis install per device: mini PC (x86_64) aman; Raspi/STB butuh build per-arch.
+- Fix `scripts/build.sh`: cross-build kini **mengunduh go2rtc sesuai arch target** (sebelumnya copy go2rtc x86-64 apa adanya → salah arch di arm64/arm/386). Terverifikasi: `dist-package/{arm64,arm,386}` launcher + go2rtc arch benar.
+- Fix `scripts/install-release.sh`: `PKGDIR` dipakai sebelum didefinisikan (blok subshell `cp -rn . "$PKGDIR"` dead code) → rapi & copy hanya sekali.
+- Tambah `scripts/uninstall.sh`: hapus bersih `/opt/cctv-monitor`, symlink `/usr/local/bin/cctv-monitor`, systemd user service, desktop entry; data dir `~/.config/cctv-monitor` DIKEEP kecuali `--purge-data`.
+- Verifikasi end-to-end di host: `install.sh` OK → launcher headless OK (`/health` 200, go2rtc API OK, SIGTERM cleanup tanpa orphan) → `uninstall.sh --yes` OK (semua artefak terhapus, data dir tetap).
+- Docs: `desktop.md` ditambah tabel "Install per Device" + "Uninstall Bersih".
+
 ### 2026-08-15 — Sesi 4 (Pivot: Webbase Linux, low-spec)
 - Keputusan user (menjawab dialog): 
   - **Buang arah Windows-native/Tauri** yang baru di-scaffold. Buat salinan project (`cctv-monitor-webbase`) dan rombak di salinan.
@@ -75,7 +129,7 @@
   - `resources/go2rtc`: v1.9.14 linux-amd64 (5.7MB). Chromium bundle dihapus dari package default (opsional, 392MB).
   - Bersihkan artifact Tauri/Windows dari salinan: `src-tauri/`, `@tauri-apps/*`, go2rtc.exe.
   - Docs: architecture.md, desktop.md, AGENTS.md, PROGRESS.md di-update ke arsitektur webbase.
-- Verifikasi di WSL (headless): `curl /health` OK; `curl /api/streams` (go2rtc) `{}`; `curl "/scan?range=192.168.18.57,..."` → `{host:"192.168.18.57",ports:[554,8000]}` (kamera EZVIZ terdeteksi); config go2rtc.yaml digenerate di `~/.config/cctv-monitor/`; SIGTERM mematikan go2rtc (no orphan). Package tanpa Chromium = **12MB**.
+- Verifikasi di WSL (headless): `curl /health` OK; `curl /api/streams` (go2rtc) `{}`; `curl "/scan?range=<IP_KAMERA>,..."` → `{host:"<IP_KAMERA>",ports:[554,8000]}` (kamera EZVIZ terdeteksi); config go2rtc.yaml digenerate di `~/.config/cctv-monitor/`; SIGTERM mematikan go2rtc (no orphan). Package tanpa Chromium = **12MB**.
 - Catatan: frontend tidak diubah (config default sudah cocok: go2rtc 127.0.0.1:1984, scan port 1986 = port launcher). Comment scanService.ts di-update (produksi = launcher Go).
 
 ### 2026-08-15 — Sesi 3 (Mode scan-only)

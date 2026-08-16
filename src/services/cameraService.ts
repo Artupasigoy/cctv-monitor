@@ -9,7 +9,13 @@ const listeners = new Set<StatusListener>()
 
 export function setCameraStatus(cameraId: string, status: CameraStatus, message?: string): void {
   const prev = statuses.get(cameraId)
-  const next: CameraStatusInfo = { ...(prev ?? {}), status, message }
+  const next: CameraStatusInfo = {
+    ...(prev ?? {}),
+    status,
+    message,
+    // Simpan pesan error terakhir untuk ditampilkan di UI (tooltip/status).
+    lastError: status === 'online' ? undefined : (message ?? prev?.lastError),
+  }
   statuses.set(cameraId, next)
   emit()
 }

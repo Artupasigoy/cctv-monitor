@@ -20,7 +20,7 @@ React + TypeScript UI (dist/ di-serve launcher)
 Komponen:
 
 - Launcher: **Go single binary** (`launcher/`) — serve frontend, endpoint scan LAN, spawn/ensure go2rtc, buka browser
-- Browser: bundled Chromium (opsional) atau browser sistem (chromium/firefox) — low-spec friendly
+- Browser: bundled Chromium (opsional) atau browser sistem **Chromium-family** (chromium/google-chrome/edge) — low-spec friendly
 - Frontend: React
 - Language: TypeScript
 - Build tool: Vite

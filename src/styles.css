@@ -101,6 +101,29 @@ button {
   color: var(--accent);
 }
 
+.topbar-sound {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.topbar-sound:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.topbar-sound.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* ============ Layout selector (EZVIZ multi-screen switcher) ============ */
 
 .layout-selector {
@@ -492,6 +515,36 @@ button {
 .tile-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.tile-retry {
+  border-color: var(--reconnecting);
+  color: var(--reconnecting);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tile-retry:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tile-status-msg {
+  position: absolute;
+  bottom: 44px;
+  left: 8px;
+  right: 8px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--text-dim);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tile-fs-hint {

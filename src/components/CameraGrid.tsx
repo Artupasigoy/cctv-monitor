@@ -11,10 +11,11 @@ interface LayoutSlot {
 interface Props {
   layout: { count: LayoutCount; slots: LayoutSlot[] }
   cameras: Camera[]
+  soundEnabled: boolean
   onSelectCamera: (slotId: string, cameraId: string | null) => void
 }
 
-export function CameraGrid({ layout, cameras, onSelectCamera }: Props) {
+export function CameraGrid({ layout, cameras, soundEnabled, onSelectCamera }: Props) {
   return (
     <div className={`grid grid-${layout.count}`}>
       {layout.slots.map((slot) => {
@@ -25,6 +26,7 @@ export function CameraGrid({ layout, cameras, onSelectCamera }: Props) {
             slotLabel={slot.label}
             camera={camera}
             cameras={cameras}
+            soundEnabled={soundEnabled}
             onSelectCamera={(cameraId) => onSelectCamera(slot.id, cameraId)}
           />
         )

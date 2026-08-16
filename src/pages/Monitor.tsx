@@ -3,8 +3,9 @@ import type { LayoutCount } from '@/types/layout'
 import { CameraList } from '@/components/CameraList'
 import { CameraGrid } from '@/components/CameraGrid'
 import { LayoutSelector } from '@/components/LayoutSelector'
+import { SpeakerIcon } from '@/components/SpeakerIcon'
 import { useCameraStatusesSummary } from '@/hooks/useCameraStatusesSummary'
-import { loadConfig } from '@/services/configService'
+import { loadConfig, saveConfig } from '@/services/configService'
 
 interface Props {
   onOpenSettings: () => void
@@ -12,6 +13,7 @@ interface Props {
 
 export function Monitor({ onOpenSettings }: Props) {
   const [layout, setLayout] = useState<LayoutCount>(() => loadConfig().settings.defaultLayout)
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadConfig().settings.soundEnabled)
   const [assignments, setAssignments] = useState<Record<string, string | null>>(() => {
     const config = loadConfig()
     const cameraIds = config.cameras.filter((c) => c.enabled).map((c) => c.id)
@@ -71,6 +73,16 @@ export function Monitor({ onOpenSettings }: Props) {
     setLayout(count)
   }, [])
 
+  const handleToggleSound = useCallback(() => {
+    setSoundEnabled((prev) => {
+      const next = !prev
+      const cfg = loadConfig()
+      cfg.settings.soundEnabled = next
+      void saveConfig(cfg)
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
@@ -94,6 +106,16 @@ export function Monitor({ onOpenSettings }: Props) {
           <span className="topbar-title">CCTV MONITOR</span>
         </div>
         <LayoutSelector value={layout} onChange={handleLayoutChange} />
+        <button
+          type="button"
+          className={`topbar-sound${soundEnabled ? ' is-active' : ''}`}
+          onClick={handleToggleSound}
+          title={soundEnabled ? 'Matikan suara' : 'Nyalakan suara'}
+          aria-pressed={soundEnabled}
+        >
+          {soundEnabled ? <SpeakerIcon muted={false} /> : <SpeakerIcon muted />}
+          <span>{soundEnabled ? 'Suara' : 'Bisu'}</span>
+        </button>
         <button type="button" className="topbar-settings" onClick={onOpenSettings}>
           ⚙ Settings
         </button>
@@ -102,7 +124,7 @@ export function Monitor({ onOpenSettings }: Props) {
       <div className="monitor-body">
         <CameraList cameras={cameras} assignedCameraIds={assignedCameraIds} onToggleCamera={handleToggleCamera} />
         <main className="monitor-main">
-          <CameraGrid layout={gridLayout} cameras={cameras} onSelectCamera={handleSelectCamera} />
+          <CameraGrid layout={gridLayout} cameras={cameras} soundEnabled={soundEnabled} onSelectCamera={handleSelectCamera} />
         </main>
       </div>
 

@@ -91,6 +91,14 @@ Verify:
 - Tidak ada automatic port forwarding / UPnP.
 - Tidak ada internet requirement.
 
+## Browser Test (Chromium-Family Only)
+
+- Hanya Chromium-family yang diuji: `chromium`, `chromium-browser`, `google-chrome`, `microsoft-edge`.
+- Autoplay: video live harus play otomatis (flag `--autoplay-policy=no-user-gesture-required`).
+- Kiosk: `--kiosk` fullscreen berfungsi.
+- Browser non-Chromium (firefox/epiphany/falkon) harus ditolak dengan pesan jelas.
+- Tanpa browser: installer harus berhenti (atau auto-install dengan persetujuan user).
+
 ## Definition of Done (v1.0)
 
 Version 1.0 selesai jika:

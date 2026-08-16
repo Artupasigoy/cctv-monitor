@@ -53,6 +53,14 @@ Contoh interval:
 
 Setelah berhasil: status = ONLINE.
 
+**Batas percobaan (anti-beban terus-menerus):**
+
+- Maksimal 20 percobaan (`MAX_RECONNECT_ATTEMPTS`). Setelah itu kamera dianggap **offline** dan hanya dicoba ulang otomatis setiap **5 menit** (`SLOW_RETRY_DELAY_MS`) — tidak membebani jaringan/kamera/CCTV secara agresif saat offline permanen.
+- Tombol **"Coba Lagi"** (`retryNow`) memicu koneksi ulang manual kapan saja.
+- **Stall detector** (`handleStall`) memakai `reconnectWithBackoff` (jalur backoff yang sama), BUKAN langsung reconnect tanpa jeda.
+- **Proteksi autoplay**: video yang `paused` karena autoplay diblokir browser TIDAK dianggap stall (mencegah reconnect loop palsu).
+- Status `offline`/`reconnecting` selalu membawa pesan (`lastError`) yang ditampilkan di UI tile.
+
 ## Stream Lifecycle
 
 Setiap kamera memiliki lifecycle:

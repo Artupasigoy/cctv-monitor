@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { Camera } from '@/types/camera'
 import { getCameraStatus, setCameraStatus } from '@/services/cameraService'
 import { loadConfig } from '@/services/configService'
@@ -27,7 +27,7 @@ export function useStream(camera: Camera | null, videoRef: React.RefObject<HTMLV
       return
     }
 
-    setCameraStatus(camera.id, 'connecting')
+    setCameraStatus(camera.id, 'connecting', 'Menghubungkan...')
 
     const config = loadConfig()
     const { host, apiPort } = config.settings.go2rtc
@@ -80,6 +80,10 @@ export function useStream(camera: Camera | null, videoRef: React.RefObject<HTMLV
       const video = videoRef.current
       if (!video || !video.srcObject) return
 
+      // Proteksi autoplay: video yang TIDAK sedang diputar (paused) karena
+      // autoplay diblokir browser BUKAN stall. Jangan picu reconnect loop.
+      if (video.paused) return
+
       const track = video.srcObject instanceof MediaStream ? video.srcObject.getVideoTracks()[0] : null
       if (track && track.readyState === 'ended') {
         handleStall(camera.id)
@@ -107,37 +111,43 @@ export function useStream(camera: Camera | null, videoRef: React.RefObject<HTMLV
 
   const handleStall = (cameraId: string) => {
     console.log(`[useStream] stall detected for ${cameraId}`)
-    setCameraStatus(cameraId, 'reconnecting', 'Stream berhenti')
+    // Pakai koneksi yang sama dengan backoff (bukan langsung reconnect tanpa
+    // jeda) agar tidak membebani jaringan/kamera saat stream macet berulang.
     const conn = connectionRef.current
     if (conn) {
-      conn.stop()
-      connectionRef.current = null
+      clearStallTimer()
+      conn.reconnectWithBackoff('Stream berhenti / tidak ada data')
+      return
     }
-    const v = videoRef.current
-    if (v) v.srcObject = null
-
-    const cam = camera
-    if (!cam || !isCameraConfigured(cam)) return
-    const config = loadConfig()
-    const { host, apiPort } = config.settings.go2rtc
-    const fresh = new StreamConnection(cam, host, apiPort, {
-      onStatusChange: (status, message) => {
-        setCameraStatus(cam.id, status, message)
-        if (status === 'online') {
-          startStallMonitor()
-        } else {
-          clearStallTimer()
-        }
-      },
-      onTrack: (stream) => {
-        const vv = videoRef.current
-        if (vv) {
-          vv.srcObject = stream
-          void vv.play().catch(() => {})
-        }
-      },
-    })
-    connectionRef.current = fresh
-    fresh.start()
+    setCameraStatus(cameraId, 'reconnecting', 'Stream berhenti / tidak ada data')
   }
+
+  const retry = useCallback(() => {
+    const conn = connectionRef.current
+    if (conn) {
+      conn.retryNow()
+    } else if (camera && isCameraConfigured(camera)) {
+      setCameraStatus(camera.id, 'connecting', 'Mencoba lagi...')
+      const config = loadConfig()
+      const { host, apiPort } = config.settings.go2rtc
+      const fresh = new StreamConnection(camera, host, apiPort, {
+        onStatusChange: (status, message) => {
+          setCameraStatus(camera.id, status, message)
+          if (status === 'online') startStallMonitor()
+          else clearStallTimer()
+        },
+        onTrack: (stream) => {
+          const v = videoRef.current
+          if (v) {
+            v.srcObject = stream
+            void v.play().catch(() => {})
+          }
+        },
+      })
+      connectionRef.current = fresh
+      fresh.start()
+    }
+  }, [camera, videoRef])
+
+  return { retry }
 }

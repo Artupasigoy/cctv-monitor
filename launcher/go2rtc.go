@@ -27,6 +27,12 @@ func ensureGo2rtc(opts options) (context.CancelFunc, error) {
 	}
 
 	cfgPath := filepath.Join(opts.dataDir, "go2rtc.yaml")
+
+	// Reclaim orphan go2rtc: jika port API sudah terisi, berarti ada go2rtc
+	// yang ditinggal launcher mati paksa (SIGKILL/power loss) dan terus
+	// menarik RTSP dari kamera. Bunuh sebelum spawn yang baru.
+	killOrphanGo2rtc(cfgPath, opts.go2rtcAPIPort)
+
 	oldStreams := extractStreamsBlock(cfgPath)
 	// Format listen go2rtc: ":port" (atau "host:port"). Nilainya harus string
 	// yang memuat port; "1984" saja di- tolak go2rtc ("missing port in address").
@@ -87,6 +93,67 @@ func waitForPort(port int) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return net.ErrClosed
+}
+
+func portInUse(port int) bool {
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// killOrphanGo2rtc mematikan go2rtc orphan yang masih hidup dari launcher
+// sebelumnya (mati paksa/SIGKILL). Orphan terus menarik RTSP dari kamera
+// tanpa pengelola launcher, membebani jaringan/device CCTV.
+//
+// Strategi: jika port API sudah terisi, cari proses yang cmdline-nya memuat
+// path config go2rtc milik aplikasi ini lalu bunuh. Tidak menyentuh go2rtc
+// milik proses lain.
+func killOrphanGo2rtc(cfgPath string, apiPort int) {
+	if !portInUse(apiPort) {
+		return
+	}
+	log.Printf("[go2rtc] port API %d sudah terisi — mendeteksi go2rtc orphan, mematikan...", apiPort)
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		log.Printf("[go2rtc] tidak bisa membaca /proc untuk deteksi orphan: %v", err)
+		return
+	}
+	killed := false
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(cmdline), "go2rtc") && strings.Contains(string(cmdline), cfgPath) {
+			if p, err := os.FindProcess(pid); err == nil {
+				log.Printf("[go2rtc] matikan orphan pid=%d (config %s)", pid, cfgPath)
+				_ = p.Kill()
+				killed = true
+			}
+		}
+	}
+	if !killed {
+		log.Printf("[go2rtc] port %d terisi tapi tidak ada go2rtc milik aplikasi ini — biarkan (kemungkinan service lain).", apiPort)
+		return
+	}
+	// Tunggu port bebas agar go2rtc baru bisa bind.
+	for i := 0; i < 30; i++ {
+		if !portInUse(apiPort) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	log.Printf("[go2rtc] peringatan: port %d masih terisi setelah kill orphan.", apiPort)
 }
 
 // extractStreamsBlock mengembalikan bagian "streams:" (baris itu sendiri dan

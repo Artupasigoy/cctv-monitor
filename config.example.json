@@ -2,8 +2,9 @@
   "version": 1,
   "cameras": [],
   "settings": {
-    "defaultLayout": 2,
+    "defaultLayout": 1,
     "defaultCameraAssignment": {},
+    "soundEnabled": false,
     "autoStart": false,
     "startMinimized": false,
     "theme": "dark",

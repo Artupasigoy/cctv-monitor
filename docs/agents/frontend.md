@@ -185,8 +185,11 @@ interface Camera {
 
 Jangan pasang UI framework besar hanya untuk button/grid/modal/icon. Gunakan asset/icon lokal. Jangan gunakan icon CDN.
 
-## No Audio by Default
+## Audio Policy
 
-- Default: Audio = OFF.
+- **Default: Audio = OFF** (`settings.soundEnabled: false`). Video element selalu `muted` kecuali user menyalakan suara.
+- Tombol suara di topbar (`topbar-sound`): ikon speaker dengan **garis coret** saat nonaktif (Bisu), speaker normal saat aktif (Suara). State tersimpan di config (`localStorage`).
+- Suara bersifat global (semua tile kamera), bukan per-kamera.
+- WebRTC: `StreamConnection` menambahkan `addTransceiver('audio', { direction: 'recvonly' })` agar track audio diterima; `muted` attribute pada `<video>` mengontrol output.
 - Jangan aktifkan microphone atau audio recording.
 - Audio hanya jika ada alasan dan desain yang jelas.

@@ -9,14 +9,17 @@ import (
 	"strings"
 )
 
-// Kebijakan browser (efisiensi untuk low-spec):
+// Kebijakan browser — CHROMIUM-FAMILY ONLY (standarisasi):
 //
-//  1. Jika --browser ditentukan, gunakan itu (chromium|firefox|system|bundled).
-//  2. Bundled Chromium (resources/chromium/chrome) hanya dipakai jika ada dan
-//     --browser=bundled atau default dan tidak ada browser sistem yang ringan.
-//  3. Default: cari browser sistem yang sudah terpasang (Chromium/Firefox
-//     konvensional lebih hemat RAM daripada Chrome for Testing di beberapa
-//     device). Bundled Chromium dipakai sebagai cadangan.
+//  1. Hanya browser berbasis Chromium yang didukung resmi: chromium,
+//     chromium-browser, google-chrome, google-chrome-stable, microsoft-edge.
+//     Alasan: konsistensi flags, codec H.264 bawaan, WebRTC lengkap, dan
+//     perilaku autoplay yang dapat dikendalikan.
+//  2. Bundled Chromium (resources/chromium/chrome) dipakai jika ada dan
+//     --browser=bundled atau tidak ada browser sistem.
+//  3. Firefox, Epiphany, Falkon, dan browser lain TIDAK didukung — ditolak
+//     dengan pesan jelas agar user tidak terjebak pada perilaku yang tidak
+//     teruji (codec, WebRTC, flags).
 //
 // Device low-spec (Raspi/STB armhf) umumnya tidak punya Chrome for Testing,
 // jadi fallback ke browser sistem adalah jalur utama.
@@ -27,10 +30,6 @@ var systemBrowsers = []string{
 	"google-chrome",
 	"google-chrome-stable",
 	"microsoft-edge",
-	"firefox",
-	"firefox-esr",
-	"epiphany",
-	"falkon",
 }
 
 func resolveBrowser(opts options, browserFlag string) (string, error) {
@@ -45,10 +44,8 @@ func resolveBrowser(opts options, browserFlag string) (string, error) {
 		return p, nil
 	case "system":
 		return findFirstSystemBrowser()
-	case "chromium":
-		return execLookPath("", "chromium")
-	case "firefox":
-		return execLookPath("", "firefox")
+	case "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "microsoft-edge":
+		return execLookPath("", browserFlag)
 	case "":
 		// Default: system terlebih dahulu (lebih ringan di low-spec),
 		// lalu bundled Chromium sebagai cadangan.
@@ -59,9 +56,10 @@ func resolveBrowser(opts options, browserFlag string) (string, error) {
 		if fileExists(p) {
 			return p, nil
 		}
-		return "", fmt.Errorf("tidak ada browser ditemukan (browser sistem maupun bundled Chromium)")
+		return "", fmt.Errorf("%s", noBrowserHelp())
 	default:
-		return execLookPath("", browserFlag)
+		// Browser non-Chromium ditolak (standarisasi).
+		return "", fmt.Errorf("browser '%s' tidak didukung. Program ini hanya mendukung browser Chromium-family (chromium, google-chrome, microsoft-edge).", browserFlag)
 	}
 }
 
@@ -71,11 +69,24 @@ func findFirstSystemBrowser() (string, error) {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("browser sistem tidak ditemukan")
+	return "", fmt.Errorf("browser sistem Chromium tidak ditemukan")
 }
 
-// openBrowser membuka browser terpilih dalam mode aplikasi menunjuk ke
-// server lokal, dengan profil terpisah (data dir/<profile>).
+// noBrowserHelp: pesan jelas saat tidak ada browser Chromium sama sekali,
+// termasuk cara install per distro dan catatan SELinux (Fedora).
+func noBrowserHelp() string {
+	return "tidak ada browser Chromium ditemukan (sistem maupun bundled).\n" +
+		"Program hanya mendukung Chromium-family. Install salah satu, misalnya:\n" +
+		"  Debian/Ubuntu/Raspberry Pi OS : sudo apt install chromium\n" +
+		"  Fedora                         : sudo dnf install chromium\n" +
+		"  Arch/Manjaro                   : sudo pacman -S chromium\n" +
+		"  Alpine                         : sudo apk add chromium\n" +
+		"  OpenSUSE                       : sudo zypper install chromium\n" +
+		"Setelah terinstall, jalankan lagi: cctv-monitor"
+}
+
+// openBrowser membuka Chromium dalam mode aplikasi menunjuk ke server lokal,
+// dengan profil terpisah (data dir/<profile>).
 func openBrowser(opts options, browserFlag string) error {
 	chrome, err := resolveBrowser(opts, browserFlag)
 	if err != nil {
@@ -87,85 +98,52 @@ func openBrowser(opts options, browserFlag string) error {
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d", opts.port)
-	base := filepath.Base(chrome)
 
-	var args []string
-	switch {
-	case base == "firefox":
-		args = []string{
-			"--no-remote",
-			"--new-window",
-			"-profile", profileDir,
-			url,
-		}
-	case base == "epiphany":
-		args = []string{"--profile=" + profileDir, url}
-	default:
-		// Chromium-family (bundled chromium, chromium, chrome, edge).
-		args = []string{
-			"--user-data-dir=" + profileDir,
-			"--no-first-run",
-			"--no-default-browser-check",
-			"--disable-features=Translate",
-			"--disable-background-networking",
-			"--disable-component-update",
-			"--disable-sync",
-		}
-		if opts.kiosk {
-			args = append(args, "--kiosk")
-		} else {
-			args = append(args, "--app="+url)
-		}
+	// Chromium-family flags (konsisten untuk semua browser resmi).
+	args := []string{
+		"--user-data-dir=" + profileDir,
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-features=Translate",
+		"--disable-background-networking",
+		"--disable-component-update",
+		"--disable-sync",
+		// Biarkan video autoplay tanpa gestur user (stream CCTV live).
+		"--autoplay-policy=no-user-gesture-required",
 	}
+	if opts.kiosk {
+		args = append(args, "--kiosk")
+	} else {
+		args = append(args, "--app="+url)
+	}
+
 	// Chrome/Chromium butuh --no-sandbox saat berjalan sebagai root
 	// (umum di container/STB). Gunakan hanya jika perlu.
-	if os.Geteuid() == 0 && base != "firefox" && base != "epiphany" {
+	if os.Geteuid() == 0 {
 		args = append(args, "--no-sandbox")
 	}
-	if opts.kiosk && len(args) > 0 && args[0] == "--app="+url {
-		// kiosk sudah di-set
-	} else if opts.kiosk {
-		// tidak ada penanganan khusus; cukup buka URL
-		if len(args) == 0 || args[len(args)-1] != url {
-			args = append(args, url)
-		}
-	}
 
-	cmdName, cmdArgs := resolveCmd(chrome, url, base, args)
-	cmd := exec.Command(cmdName, cmdArgs...)
+	cmd := exec.Command(chrome, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return err
+		return fmt.Errorf("gagal menjalankan Chromium (%s): %w — cek sandbox/SELinux (Fedora), atau jalankan sebagai user biasa", chrome, err)
 	}
 	log.Printf("[browser] dibuka: %s (pid %d)", chrome, cmd.Process.Pid)
 	return nil
 }
 
-// resolveCmd memilih binary + argumen. Untuk environment tanpa DISPLAY
-// (Linux CLI/headless), bungkus Chromium dalam `xvfb-run -a` agar tetap
-// muncul GUI (X virtual framebuffer). Firefox/epiphany tidak butuh ini.
-func resolveCmd(chrome, url, base string, args []string) (cmdName string, cmdArgs []string) {
-	if base == "chromium" || base == "chromium-browser" || base == "google-chrome" ||
-		base == "google-chrome-stable" || base == "microsoft-edge" ||
-		strings.HasSuffix(base, "chrome") || strings.HasSuffix(base, "chrome.exe") {
-		// Xvfb fallback hanya untuk chromium-family di headless CLI.
-		if os.Getenv("DISPLAY") == "" {
-			if p, err := exec.LookPath("xvfb-run"); err == nil {
-				cmdName = p
-				cmdArgs = append([]string{"-a"}, chrome)
-				cmdArgs = append(cmdArgs, args...)
-				return cmdName, cmdArgs
-			}
-			// display masih harus diset manual (Xvfb) — beri petunjuk
-			cmdName = chrome
-			cmdArgs = append([]string{chrome}, args...)
-			return cmdName, cmdArgs
-		}
+// execLookPath: cari binary di resources; jika tidak ada, cari di PATH.
+func execLookPath(dir, name string) (string, error) {
+	candidate := filepath.Join(dir, name)
+	if fileExists(candidate) {
+		return candidate, nil
 	}
-	cmdName = chrome
-	cmdArgs = append([]string{chrome}, args...)
-	return cmdName, cmdArgs
+	p, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("binary %s tidak ditemukan (cari: %s)", name, candidate)
+	}
+	return p, nil
 }
 
 func browserFlagFromName(name string) string {
