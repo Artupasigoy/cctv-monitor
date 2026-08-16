@@ -44,8 +44,9 @@ read_version() {
 # ask_yes_no: tanya ya/tidak yang AMAN walau stdin adalah pipe (curl | bash).
 # Baca dari /dev/tty (terminal pengguna) sehingga prompt benar-benar muncul.
 # $1 = teks prompt. Return 0 = ya, 1 = tidak/EOF.
+# ask_yes_no: prompt konfirmasi. $2 (opsional) = default bila Enter kosong ("y"/"n").
 ask_yes_no() {
-  local prompt="$1" ans=""
+  local prompt="$1" def="${2:-n}" ans=""
   if [ -c /dev/tty ] 2>/dev/null; then
     read -r -p "${prompt}" ans < /dev/tty || ans=""
   else
@@ -53,6 +54,9 @@ ask_yes_no() {
   fi
   case "${ans}" in
     y|Y|yes|YES) return 0 ;;
+    "")
+      if [ "${def}" = "y" ]; then return 0; else return 1; fi
+      ;;
     *) return 1 ;;
   esac
 }
@@ -106,33 +110,49 @@ detect_pkgmgr() {
 #   - coba 'chromium' (Debian, Ubuntu lama)
 #   - lalu 'chromium-browser' (transitional wrapper ke snap di Ubuntu 22.04+)
 #   - lalu 'snap install chromium' (jika snapd ada dan apt semua gagal)
+# Verifikasi keberhasilan memakai find_chromium (bukan return code apt/snap),
+# karena chromium-browser bisa "berhasil" via apt tapi binary-nya ada di
+# /snap/bin (dipindah saat package diinstall).
 # Mengembalikan 0 jika salah satu berhasil, 1 jika semua gagal.
 apt_install_chromium() {
-  local apt_out
-  apt-get update -y >/dev/null 2>&1 || true
+  local pkg_dir="${1:-}"
+
+  echo "[browser] apt-get update (mungkin butuh beberapa saat)..."
+  apt-get update 2>&1 | tail -3 || true
 
   if apt-cache policy chromium 2>/dev/null | grep -q 'Candidate: [0-9]'; then
     echo "[browser] install package 'chromium' via apt..."
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y chromium; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y chromium 2>&1 | tail -5
+    if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
       return 0
     fi
   fi
 
   if apt-cache policy chromium-browser 2>/dev/null | grep -q 'Candidate: [0-9]'; then
     echo "[browser] install package 'chromium-browser' via apt..."
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y chromium-browser; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y chromium-browser 2>&1 | tail -5
+    if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
       return 0
     fi
   fi
 
   if command -v snap >/dev/null 2>&1; then
-    echo "[browser] apt tidak menyediakan Chromium; mencoba 'snap install chromium'..."
-    if snap install chromium; then
+    echo "[browser] apt tidak menyediakan Chromium yang jalan; mencoba 'snap install chromium'..."
+    # Pastikan snapd aktif (bisa mati di container/headless) sebelum snap install.
+    systemctl start snapd 2>/dev/null || true
+    snap install chromium 2>&1 | tail -5
+    if find_chromium "${pkg_dir}" >/dev/null 2>&1; then
       return 0
     fi
   fi
 
-  echo "[browser] GAGAL menginstall Chromium (package chromium/chromium-browser/snap tidak berhasil)." >&2
+  echo "[browser] GAGAL menginstall Chromium secara otomatis." >&2
+  echo "[browser] Diagnosa: apt candidate chromium=$(apt-cache policy chromium 2>/dev/null | grep Candidate || echo none);" >&2
+  echo "[browser]   chromium-browser=$(apt-cache policy chromium-browser 2>/dev/null | grep Candidate || echo none); snap=$(command -v snap || echo none)" >&2
+  echo "[browser]   /snap/bin/chromium=$( [ -x /snap/bin/chromium ] && echo ada || echo tidak-ada )" >&2
+  echo "[browser] Solusi manual:" >&2
+  echo "[browser]   sudo apt install chromium-browser   (Ubuntu/Debian)" >&2
+  echo "[browser]   sudo snap install chromium          (Ubuntu 22.04+)" >&2
   return 1
 }
 
@@ -173,14 +193,15 @@ ensure_browser() {
   echo "[browser] Installer akan menginstall 'chromium' via ${pkgmgr}."
   echo "[browser] 'chromium' dari repo distro adalah pilihan PALING RINGAN dan"
   echo "[browser] paling compatible (lebih ringan daripada google-chrome/edge/bundled)."
-  if ask_yes_no "Setuju untuk menginstall Chromium sekarang? [y/N] "; then
+  echo "[browser] (untuk skip otomatis, jalankan dengan env CCTVMON_NO_BROWSER=1)"
+  if [ "${CCTVMON_NO_BROWSER:-0}" != "1" ] && ask_yes_no "Setuju untuk menginstall Chromium sekarang? [Y/n] " y; then
     echo "[browser] Menginstall chromium via ${pkgmgr}..."
     case "${pkgmgr}" in
       apt)
-        # Fallback berlapis (chromium -> chromium-browser -> snap); guard error.
-        if ! apt_install_chromium; then
-          echo "[browser] GAGAL menginstall Chromium secara otomatis. Install manual:" >&2
-          echo "[browser]   sudo apt install chromium-browser   (atau) sudo snap install chromium" >&2
+        # Fallback berlapis (chromium -> chromium-browser -> snap); verifikasi
+        # keberhasilan memakai find_chromium, bukan return code apt/snap.
+        if ! apt_install_chromium "${pkg_dir}"; then
+          echo "[browser] GAGAL menginstall Chromium secara otomatis." >&2
           exit 1
         fi
         ;;
