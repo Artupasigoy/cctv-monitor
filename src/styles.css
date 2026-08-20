@@ -469,6 +469,7 @@ button {
   right: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 8px;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
@@ -486,8 +487,9 @@ button {
 }
 
 .camera-select {
-  flex: 1;
-  max-width: 200px;
+  position: absolute;
+  left: 8px;
+  max-width: calc(50% - 80px);
   background: rgba(21, 27, 36, 0.95);
   border: 1px solid var(--border-strong);
   color: var(--text);
@@ -519,6 +521,8 @@ button {
 }
 
 .tile-retry {
+  position: absolute;
+  right: 8px;
   border-color: var(--reconnecting);
   color: var(--reconnecting);
   font-size: 11px;
@@ -528,6 +532,12 @@ button {
 .tile-retry:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Retry menempati sudut kanan bawah yang sama dengan tombol fullscreen;
+   sembunyikan fs-btn saat retry tampil agar tidak bertumpuk. */
+.tile:has(.tile-retry) .tile-fs-btn {
+  display: none;
 }
 
 /* Kualitas video (HD / LOW / AUTO) — tengah bawah tile */
@@ -674,14 +684,24 @@ button {
   pointer-events: auto;
 }
 
-.tile-fs-hint .tile-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  padding: 0 2px;
+.tile-fs-exit {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 50%;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  flex: none;
 }
 
-.tile-fs-hint .tile-btn:hover {
+.tile-fs-exit:hover {
+  border-color: var(--accent);
   color: var(--accent);
 }
 
