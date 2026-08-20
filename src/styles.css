@@ -617,16 +617,23 @@ button {
   position: absolute;
   top: 8px;
   right: 8px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: rgba(0, 0, 0, 0.65);
   color: var(--text);
+  border: 1px solid var(--border-strong);
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 12px;
+  line-height: 1;
   z-index: 4;
-  pointer-events: auto;
+  cursor: pointer;
+}
+
+.tile-fs-hint:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Fullscreen button — pojok kanan bawah tile */
@@ -682,27 +689,6 @@ button {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
-}
-
-.tile-fs-exit {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 50%;
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  flex: none;
-}
-
-.tile-fs-exit:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* ============ Status bar ============ */

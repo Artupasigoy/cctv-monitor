@@ -28,12 +28,11 @@ export function CameraTile({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const idleTimer = useRef<number | undefined>(undefined)
-  const lastExitRef = useRef(0)
   const [controlsHidden, setControlsHidden] = useState(false)
   const [weakSignal, setWeakSignal] = useState(false)
   const [effectiveMode, setEffectiveMode] = useState<'high' | 'low'>('high')
   const { camera: cameraInfo, status } = useCamera(camera?.id ?? null)
-  const { isFullscreen, toggle, exit, fullscreenRef } = useFullscreen()
+  const { isFullscreen, toggle, fullscreenRef } = useFullscreen()
 
   const { retry } = useStream(camera, videoRef, {
     qualityMode: camera?.qualityMode,
@@ -62,20 +61,9 @@ export function CameraTile({
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
-      if (Date.now() - lastExitRef.current < 400) return
       toggle()
     },
     [toggle],
-  )
-
-  const handleClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (!isFullscreen) return
-      if ((e.target as HTMLElement).closest('button, select, .tile-controls, .tile-fs-hint')) return
-      lastExitRef.current = Date.now()
-      exit()
-    },
-    [isFullscreen, exit],
   )
 
   const handleQuality = (mode: QualityMode) => {
@@ -89,7 +77,6 @@ export function CameraTile({
       ref={fullscreenRef}
       onDoubleClick={handleDoubleClick}
       onMouseMove={handleMouseMove}
-      onClick={handleClick}
     >
       <div className="tile-video-wrap">
         {!showPlaceholder ? (
@@ -165,12 +152,15 @@ export function CameraTile({
       )}
 
       {isFullscreen && (
-        <div className="tile-fs-hint">
-          <button type="button" className="tile-fs-exit" title="Keluar dari fullscreen" onClick={toggle}>
-            ✕
-          </button>
-          <span>Klik atau tekan Esc untuk keluar</span>
-        </div>
+        <button
+          type="button"
+          className="tile-fs-hint"
+          title="Keluar dari fullscreen"
+          onClick={toggle}
+        >
+          <span aria-hidden="true">✕</span>
+          <span>Esc / klik untuk keluar</span>
+        </button>
       )}
     </div>
   )
