@@ -6,6 +6,8 @@ export type CameraStatus =
   | 'reconnecting'
   | 'error'
 
+export type QualityMode = 'high' | 'low' | 'auto'
+
 export interface EncryptedText {
   iv: string
   data: string
@@ -22,7 +24,8 @@ export interface Camera {
   /** Password terenkripsi (AES-GCM) untuk disimpan. Jangan pernah berisi plaintext. */
   passwordEnc?: EncryptedText
   enabled: boolean
-  preferredStream?: 'main' | 'sub'
+  /** Mode kualitas per kamera: high (main), low (sub), auto (otomatis sesuai jaringan). Default: auto. */
+  qualityMode: QualityMode
   /** RTSP path. Boleh kosong (""): aplikasi auto-detect dari daftar kandidat EZVIZ. */
   rtspPath: string
 }

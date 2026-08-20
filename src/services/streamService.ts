@@ -298,6 +298,33 @@ export class StreamConnection {
       this.ws = null
     }
   }
+
+  /** Ambil statistik RTP video dari WebRTC (packet loss & jitter) untuk deteksi koneksi lemah. */
+  async getVideoStats(): Promise<VideoStats | null> {
+    if (!this.pc) return null
+    try {
+      const stats = await this.pc.getStats()
+      for (const s of stats.values()) {
+        if (s.type === 'inbound-rtp' && s.kind === 'video') {
+          const packetsLost = Number(s.packetsLost ?? 0)
+          const packetsReceived = Number(s.packetsReceived ?? 0)
+          const jitterMs = Number(s.jitter ?? 0) * 1000
+          const bytesReceived = Number(s.bytesReceived ?? 0)
+          return { packetsLost, packetsReceived, jitterMs, bytesReceived }
+        }
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+}
+
+export interface VideoStats {
+  packetsLost: number
+  packetsReceived: number
+  jitterMs: number
+  bytesReceived: number
 }
 
 export function isCameraConfigured(camera: Camera): boolean {

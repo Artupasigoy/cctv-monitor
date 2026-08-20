@@ -171,6 +171,7 @@ export function Settings({ onClose }: Props) {
         username,
         password: credPassword,
         enabled: true,
+        qualityMode: 'auto',
       }
       nextCameras = exists
         ? config.cameras.map((c) => (c.id === exists.id ? { ...c, ...newCam } : c))

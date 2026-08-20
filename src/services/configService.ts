@@ -48,7 +48,10 @@ export function loadConfig(): AppConfig {
   if (!stored) return getDefaultConfig()
   const defaults = getDefaultConfig().settings
   const settings: ApplicationSettings = { ...defaults, ...stored.settings }
-  return { ...stored, settings }
+  const cameras = (stored.cameras ?? []).map((c) =>
+    c.qualityMode ? c : { ...c, qualityMode: 'auto' as const },
+  )
+  return { ...stored, cameras, settings }
 }
 
 export async function saveConfig(config: AppConfig): Promise<void> {

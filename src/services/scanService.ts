@@ -78,5 +78,6 @@ export function cameraFromScanned(s: ScannedCamera, index: number): Camera {
     username: '',
     password: '',
     enabled: true,
+    qualityMode: 'auto',
   }
 }

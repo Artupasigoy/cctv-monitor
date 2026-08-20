@@ -1,4 +1,4 @@
-import type { Camera } from '@/types/camera'
+import type { Camera, QualityMode } from '@/types/camera'
 import type { LayoutCount } from '@/types/layout'
 import { CameraTile } from './CameraTile'
 
@@ -13,9 +13,10 @@ interface Props {
   cameras: Camera[]
   soundEnabled: boolean
   onSelectCamera: (slotId: string, cameraId: string | null) => void
+  onQualityModeChange: (cameraId: string, mode: QualityMode) => void
 }
 
-export function CameraGrid({ layout, cameras, soundEnabled, onSelectCamera }: Props) {
+export function CameraGrid({ layout, cameras, soundEnabled, onSelectCamera, onQualityModeChange }: Props) {
   return (
     <div className={`grid grid-${layout.count}`}>
       {layout.slots.map((slot) => {
@@ -28,6 +29,7 @@ export function CameraGrid({ layout, cameras, soundEnabled, onSelectCamera }: Pr
             cameras={cameras}
             soundEnabled={soundEnabled}
             onSelectCamera={(cameraId) => onSelectCamera(slot.id, cameraId)}
+            onQualityModeChange={onQualityModeChange}
           />
         )
       })}

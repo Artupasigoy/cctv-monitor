@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { LayoutCount } from '@/types/layout'
+import type { Camera, QualityMode } from '@/types/camera'
 import { CameraList } from '@/components/CameraList'
 import { CameraGrid } from '@/components/CameraGrid'
 import { LayoutSelector } from '@/components/LayoutSelector'
@@ -14,6 +15,7 @@ interface Props {
 export function Monitor({ onOpenSettings }: Props) {
   const [layout, setLayout] = useState<LayoutCount>(() => loadConfig().settings.defaultLayout)
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadConfig().settings.soundEnabled)
+  const [cameras, setCameras] = useState<Camera[]>(() => loadConfig().cameras.filter((c) => c.enabled))
   const [assignments, setAssignments] = useState<Record<string, string | null>>(() => {
     const config = loadConfig()
     const cameraIds = config.cameras.filter((c) => c.enabled).map((c) => c.id)
@@ -22,7 +24,6 @@ export function Monitor({ onOpenSettings }: Props) {
     return { ...fallback, ...config.settings.defaultCameraAssignment }
   })
 
-  const cameras = useMemo(() => loadConfig().cameras.filter((c) => c.enabled), [])
   const summary = useCameraStatusesSummary()
 
   const assignedCameraIds = useMemo(() => {
@@ -83,6 +84,13 @@ export function Monitor({ onOpenSettings }: Props) {
     })
   }, [])
 
+  const handleQualityModeChange = useCallback((cameraId: string, mode: QualityMode) => {
+    const cfg = loadConfig()
+    cfg.cameras = cfg.cameras.map((c) => (c.id === cameraId ? { ...c, qualityMode: mode } : c))
+    void saveConfig(cfg)
+    setCameras(cfg.cameras.filter((c) => c.enabled))
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
@@ -110,7 +118,7 @@ export function Monitor({ onOpenSettings }: Props) {
           type="button"
           className={`topbar-sound${soundEnabled ? ' is-active' : ''}`}
           onClick={handleToggleSound}
-          title={soundEnabled ? 'Matikan suara' : 'Nyalakan suara'}
+          title={soundEnabled ? 'Matikan suara (drop audio semua CCTV)' : 'Nyalakan suara (streaming audio semua CCTV)'}
           aria-pressed={soundEnabled}
         >
           {soundEnabled ? <SpeakerIcon muted={false} /> : <SpeakerIcon muted />}
@@ -124,7 +132,7 @@ export function Monitor({ onOpenSettings }: Props) {
       <div className="monitor-body">
         <CameraList cameras={cameras} assignedCameraIds={assignedCameraIds} onToggleCamera={handleToggleCamera} />
         <main className="monitor-main">
-          <CameraGrid layout={gridLayout} cameras={cameras} soundEnabled={soundEnabled} onSelectCamera={handleSelectCamera} />
+          <CameraGrid layout={gridLayout} cameras={cameras} soundEnabled={soundEnabled} onSelectCamera={handleSelectCamera} onQualityModeChange={handleQualityModeChange} />
         </main>
       </div>
 

@@ -1,4 +1,4 @@
-import type { Camera } from '@/types/camera'
+import type { Camera, QualityMode } from '@/types/camera'
 import { go2rtcStreamName } from './streamService'
 import { loadConfig } from './configService'
 import { getCameraPassword } from './configService'
@@ -8,6 +8,7 @@ export interface Go2rtcYamlOptions {
   rtspListen: string
   webrtcListen: string
   useH264Filter?: boolean
+  dropAudio?: boolean
 }
 
 export interface Go2rtcApplyResult {
@@ -47,13 +48,38 @@ function yamlEscape(value: string): string {
   return JSON.stringify(value)
 }
 
-function rtspUrlForPath(cam: Camera, password: string, path: string): string {
+function rtspUrlForPath(cam: Camera, password: string, path: string, dropAudio = false): string {
   const creds = cam.username ? `${encodeURIComponent(cam.username)}:${encodeURIComponent(password)}@` : ''
-  return `rtsp://${creds}${cam.host}:${cam.port}${path}`
+  return `rtsp://${creds}${cam.host}:${cam.port}${path}${dropAudio ? '?video' : ''}`
 }
 
-function rtspUrlFor(cam: Camera, password: string): string {
-  return rtspUrlForPath(cam, password, cam.rtspPath)
+function rtspUrlFor(cam: Camera, password: string, dropAudio = false): string {
+  return rtspUrlForPath(cam, password, cam.rtspPath, dropAudio)
+}
+
+/** Map path main↔sub untuk EZVIZ/Hikvision. Return null bila pola path tidak dikenal. */
+export function mapQualityPath(path: string, mode: QualityMode): string | null {
+  const mainStreaming = '/Streaming/Channels/101'
+  const subStreaming = '/Streaming/Channels/102'
+  const isHigh = mode === 'high' || mode === 'auto'
+  if (path.includes(mainStreaming)) return isHigh ? mainStreaming : subStreaming
+  if (path.includes(subStreaming)) return isHigh ? mainStreaming : subStreaming
+  if (path.includes('/ch1/main/av_stream')) return isHigh ? path : '/ch1/sub/av_stream'
+  if (path.includes('/ch1/sub/av_stream')) return isHigh ? '/ch1/main/av_stream' : path
+  return null
+}
+
+/** RTSP URL sesuai mode kualitas. Bila sub tidak tersedia → return null (fallback ke high). */
+export function rtspUrlForMode(
+  cam: Camera,
+  password: string,
+  mode: QualityMode,
+  dropAudio = false,
+): string | null {
+  if (mode === 'high' || mode === 'auto') return rtspUrlFor(cam, password, dropAudio)
+  const mapped = mapQualityPath(cam.rtspPath, mode)
+  if (mapped === null) return null
+  return rtspUrlForPath(cam, password, mapped, dropAudio)
 }
 
 async function probeStream(
@@ -117,6 +143,7 @@ export async function applyConfigToGo2rtc(
   cameras: Camera[],
   apiHost: string,
   apiPort: number,
+  options: { dropAudio?: boolean } = {},
 ): Promise<Go2rtcApplyResult[]> {
   const results: Go2rtcApplyResult[] = []
   for (const cam of cameras) {
@@ -126,6 +153,7 @@ export async function applyConfigToGo2rtc(
       continue
     }
     const password = await getCameraPassword(cam)
+    const mode = cam.qualityMode ?? 'auto'
     if (!cam.rtspPath) {
       const detect = await detectRtspPath(cam, apiHost, apiPort)
       if (!detect.path) {
@@ -137,7 +165,8 @@ export async function applyConfigToGo2rtc(
         })
         continue
       }
-      const url = rtspUrlForPath(cam, password, detect.path)
+      const camWithPath = { ...cam, rtspPath: detect.path }
+      const url = rtspUrlForMode(camWithPath, password, mode, options.dropAudio) ?? rtspUrlFor(camWithPath, password, options.dropAudio)
       try {
         await fetch(
           `http://${apiHost}:${apiPort}/api/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(url)}`,
@@ -149,7 +178,7 @@ export async function applyConfigToGo2rtc(
       }
       continue
     }
-    const url = rtspUrlFor(cam, password)
+    const url = rtspUrlForMode(cam, password, mode, options.dropAudio) ?? rtspUrlFor(cam, password, options.dropAudio)
     try {
       const res = await fetch(`http://${apiHost}:${apiPort}/api/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(url)}`, {
         method: 'PUT',
@@ -165,6 +194,35 @@ export async function applyConfigToGo2rtc(
     }
   }
   return results
+}
+
+/** Apply ulang source satu kamera ke go2rtc sesuai mode kualitas & dropAudio. Dipakai saat switch runtime. */
+export async function applyCameraSource(
+  cam: Camera,
+  apiHost: string,
+  apiPort: number,
+  options: { dropAudio?: boolean; mode?: QualityMode } = {},
+): Promise<boolean> {
+  if (!cam.enabled || !cam.host || !cam.rtspPath) return false
+  const password = await getCameraPassword(cam)
+  const mode = options.mode ?? cam.qualityMode ?? 'auto'
+  const url = rtspUrlForMode(cam, password, mode, options.dropAudio)
+  if (!url) return false
+  const name = go2rtcStreamName(cam.id)
+  try {
+    const res = await fetch(
+      `http://${apiHost}:${apiPort}/api/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(url)}`,
+      { method: 'PUT' },
+    )
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/** Tersedia mode low untuk kamera ini (pola path substream dikenali). */
+export function isLowAvailable(cam: Camera): boolean {
+  return mapQualityPath(cam.rtspPath ?? '', 'low') !== null
 }
 
 export async function generateGo2rtcYaml(
@@ -190,7 +248,9 @@ export async function generateGo2rtcYaml(
       const creds = cam.username
         ? `${yamlEscape(cam.username)}:${yamlEscape(password)}@`
         : ''
-      const url = `rtsp://${creds}${yamlEscape(cam.host)}:${cam.port}${yamlEscape(cam.rtspPath)}`
+      const dropAudio = opts.dropAudio ?? false
+      const path = mapQualityPath(cam.rtspPath, cam.qualityMode ?? 'auto') ?? cam.rtspPath
+      const url = `rtsp://${creds}${yamlEscape(cam.host)}:${cam.port}${yamlEscape(path)}${dropAudio ? '?video' : ''}`
       lines.push(`  ${name}: ${url}`)
     }
   }
@@ -255,7 +315,7 @@ export async function applyConfiguredStreams(): Promise<void> {
   )
   if (readyCams.length === 0) return
   try {
-    await applyConfigToGo2rtc(readyCams, host, apiPort)
+    await applyConfigToGo2rtc(readyCams, host, apiPort, { dropAudio: !config.settings.soundEnabled })
     console.log(`[go2rtc] re-apply ${readyCams.length} stream pada startup`)
   } catch (e) {
     console.log('[go2rtc] re-apply gagal:', e)

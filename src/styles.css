@@ -530,6 +530,61 @@ button {
   color: var(--accent);
 }
 
+/* Kualitas video (HD / LOW / AUTO) — tengah bawah tile */
+.tile-quality {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(21, 27, 36, 0.95);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 2px;
+}
+
+.tile-quality-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  border-radius: 3px;
+  padding: 3px 7px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tile-quality-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.tile-quality-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.tile-quality-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Hint koneksi lemah saat mode high */
+.tile-weak-hint {
+  position: absolute;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #ffd166;
+  border: 1px solid rgba(255, 209, 102, 0.5);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  z-index: 5;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .tile-status-msg {
   position: absolute;
   bottom: 44px;
