@@ -1,4 +1,3 @@
-import type { Camera } from '@/types/camera'
 import { loadConfig } from './configService'
 
 export interface ScannedCamera {
@@ -20,8 +19,6 @@ export interface ScanResult {
   found: ScannedCamera[]
   error?: string
 }
-
-export type Scanner = (options?: ScanOptions) => Promise<ScanResult>
 
 /**
  * Scan kamera di LAN.
@@ -58,26 +55,8 @@ async function httpScanner(options?: ScanOptions): Promise<ScanResult> {
   }
 }
 
-let scanner: Scanner = httpScanner
-
-export function registerScanner(impl: Scanner): void {
-  scanner = impl
-}
+let scanner: (options?: ScanOptions) => Promise<ScanResult> = httpScanner
 
 export async function scanCameras(options?: ScanOptions): Promise<ScanResult> {
   return scanner(options)
-}
-
-export function cameraFromScanned(s: ScannedCamera, index: number): Camera {
-  return {
-    id: `cam${Date.now()}_${index}`,
-    name: s.name ?? `Kamera ${index + 1} (${s.host})`,
-    host: s.host,
-    port: s.port,
-    rtspPath: s.rtspPath ?? '',
-    username: '',
-    password: '',
-    enabled: true,
-    qualityMode: 'auto',
-  }
 }

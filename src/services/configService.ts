@@ -63,24 +63,3 @@ export function resetConfig(): AppConfig {
   localStorage.removeItem(STORAGE_KEY)
   return getDefaultConfig()
 }
-
-export async function updateCameras(cameras: Camera[]): Promise<AppConfig> {
-  const cfg = loadConfig()
-  cfg.cameras = cameras
-  await saveConfig(cfg)
-  return cfg
-}
-
-export async function updateSettings(settings: ApplicationSettings): Promise<AppConfig> {
-  const cfg = loadConfig()
-  cfg.settings = settings
-  await saveConfig(cfg)
-  return cfg
-}
-
-export async function rtspUrl(camera: Camera): Promise<string | null> {
-  if (!camera.host || !camera.rtspPath) return null
-  const password = await getCameraPassword(camera)
-  const creds = camera.username ? `${encodeURIComponent(camera.username)}:${encodeURIComponent(password)}@` : ''
-  return `rtsp://${creds}${camera.host}:${camera.port}${camera.rtspPath}`
-}

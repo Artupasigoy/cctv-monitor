@@ -1,6 +1,4 @@
-import type { Camera, CameraStatus, CameraStatusInfo } from '@/types/camera'
-import type { AppConfig } from '@/types/settings'
-import { loadConfig } from './configService'
+import type { CameraStatus, CameraStatusInfo } from '@/types/camera'
 
 export type StatusListener = (statuses: Map<string, CameraStatusInfo>) => void
 
@@ -35,16 +33,4 @@ export function subscribeCameraStatuses(listener: StatusListener): () => void {
 
 function emit(): void {
   for (const l of listeners) l(getCameraStatuses())
-}
-
-export function getEnabledCameras(config: AppConfig): Camera[] {
-  return config.cameras.filter((c) => c.enabled)
-}
-
-export function getCameras(): Camera[] {
-  return loadConfig().cameras
-}
-
-export function isConfigured(camera: Camera): boolean {
-  return Boolean(camera.host && camera.rtspPath && (camera.username || camera.passwordEnc || camera.password))
 }

@@ -1,5 +1,4 @@
 import type { Camera, CameraStatus } from '@/types/camera'
-import { rtspUrl } from './configService'
 
 export const GO2RTC_STREAM_PREFIX = 'cam'
 
@@ -329,8 +328,4 @@ export interface VideoStats {
 
 export function isCameraConfigured(camera: Camera): boolean {
   return Boolean(camera.host && camera.rtspPath && (camera.username || camera.passwordEnc || camera.password))
-}
-
-export async function getRtspUrl(camera: Camera): Promise<string | null> {
-  return rtspUrl(camera)
 }

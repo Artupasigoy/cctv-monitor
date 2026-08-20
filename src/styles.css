@@ -595,26 +595,6 @@ button {
   white-space: nowrap;
 }
 
-.tile-status-msg {
-  position: absolute;
-  bottom: 44px;
-  left: 8px;
-  right: 8px;
-  padding: 4px 8px;
-  background: rgba(0, 0, 0, 0.65);
-  color: var(--text-dim);
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 1.35;
-  z-index: 3;
-  pointer-events: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Overlay loading: muncul saat kamera aktif tapi video belum tampil
-   (menghubungkan, blink/reconnect, offline, atau baru restart). */
 .tile-loading {
   position: absolute;
   inset: 0;

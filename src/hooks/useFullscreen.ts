@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-interface FullscreenOptions {
-  onExit?: () => void
-}
-
-export function useFullscreen(options?: FullscreenOptions) {
+export function useFullscreen() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const elementRef = useRef<HTMLDivElement>(null)
 
@@ -16,19 +12,13 @@ export function useFullscreen(options?: FullscreenOptions) {
     }
   }, [])
 
-  const exit = useCallback(() => {
-    if (document.fullscreenElement) void document.exitFullscreen()
-  }, [])
-
   useEffect(() => {
     const onChange = () => {
-      const fs = document.fullscreenElement === elementRef.current
-      setIsFullscreen(fs)
-      if (!fs) options?.onExit?.()
+      setIsFullscreen(document.fullscreenElement === elementRef.current)
     }
     document.addEventListener('fullscreenchange', onChange)
     return () => document.removeEventListener('fullscreenchange', onChange)
-  }, [options])
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -40,5 +30,5 @@ export function useFullscreen(options?: FullscreenOptions) {
     return () => document.removeEventListener('keydown', onKey)
   }, [])
 
-  return { isFullscreen, toggle, exit, fullscreenRef: elementRef }
+  return { isFullscreen, toggle, fullscreenRef: elementRef }
 }
