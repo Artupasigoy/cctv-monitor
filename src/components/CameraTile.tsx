@@ -31,8 +31,13 @@ export function CameraTile({
   const [controlsHidden, setControlsHidden] = useState(false)
   const [weakSignal, setWeakSignal] = useState(false)
   const [effectiveMode, setEffectiveMode] = useState<'high' | 'low'>('high')
+  const [hasFrames, setHasFrames] = useState(false)
   const { camera: cameraInfo, status } = useCamera(camera?.id ?? null)
   const { isFullscreen, toggle, fullscreenRef } = useFullscreen()
+
+  useEffect(() => {
+    if (status.status !== 'online') setHasFrames(false)
+  }, [status.status])
 
   const { retry } = useStream(camera, videoRef, {
     qualityMode: camera?.qualityMode,
@@ -71,6 +76,24 @@ export function CameraTile({
     onQualityModeChange(camera.id, mode)
   }
 
+  const statusLabel = (() => {
+    if (status.status === 'online') return hasFrames ? null : 'Memuat...'
+    if (status.message) return status.message
+    switch (status.status) {
+      case 'connecting':
+        return 'Menghubungkan...'
+      case 'reconnecting':
+        return 'Menghubungkan kembali...'
+      case 'offline':
+        return 'Kamera tidak merespons. Mencoba lagi...'
+      case 'error':
+        return 'Terjadi kesalahan'
+      default:
+        return 'Memuat...'
+    }
+  })()
+  const showLoading = isActive && (status.status !== 'online' || !hasFrames)
+
   return (
     <div
       className={`tile${isFullscreen ? ' is-fullscreen' : ''}${controlsHidden ? ' controls-hidden' : ''}`}
@@ -80,11 +103,25 @@ export function CameraTile({
     >
       <div className="tile-video-wrap">
         {!showPlaceholder ? (
-          <video ref={videoRef} className="tile-video" autoPlay playsInline muted={!soundEnabled} />
+          <video
+            ref={videoRef}
+            className="tile-video"
+            autoPlay
+            playsInline
+            muted={!soundEnabled}
+            onLoadedData={() => setHasFrames(true)}
+            onPlaying={() => setHasFrames(true)}
+          />
         ) : (
           <div className="tile-placeholder">
             <div className="tile-empty-title">{currentCamera ? 'Kamera belum dikonfigurasi' : 'Kosong'}</div>
             <div className="tile-empty-sub">Klik untuk memilih kamera</div>
+          </div>
+        )}
+        {showLoading && (
+          <div className="tile-loading" role="status" aria-live="polite">
+            <div className="tile-spinner" aria-hidden="true" />
+            <span className="tile-loading-text">{statusLabel}</span>
           </div>
         )}
       </div>
@@ -143,12 +180,6 @@ export function CameraTile({
 
       {weakSignal && isActive && qualityMode === 'high' && (
         <div className="tile-weak-hint">⚠️ Koneksi lemah — turunkan ke mode Low</div>
-      )}
-
-      {status.message && isActive && (
-        <div className="tile-status-msg" title={status.lastError ?? status.message}>
-          {status.message}
-        </div>
       )}
 
       {isFullscreen && (
